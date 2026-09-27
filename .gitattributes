@@ -1,0 +1,4 @@
+# 仓库内统一用 LF，Windows 检出时按系统习惯换行
+* text=auto eol=lf
+*.png binary
+*.jpg binary
