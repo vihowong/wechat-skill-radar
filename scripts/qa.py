@@ -192,7 +192,18 @@ def main() -> None:
 
     # 6. 标题候选（写在 Markdown 的 > 元信息里，口径见 references/titles.md）
     meta_lines = [l[2:].strip() for l in md.splitlines() if l.startswith("> ")]
-    title_lines = [l for l in meta_lines if re.match(r"^[①-⑳]", l)]
+    title_lines, in_block = [], False
+    for l in meta_lines:
+        if l.startswith("标题候选"):
+            in_block = True
+            continue
+        if not in_block:
+            continue
+        if re.match(r"^(?:[①-⑳]|\d+\s*[.、)]|[-·])\s*", l):
+            title_lines.append(l)
+            continue
+        if "：" in l or l.startswith(("封面", "配图", "版式", "结尾", "使用", "数据", "行业", "渠道", "分享")):
+            in_block = False
     recommend_line = next((l for l in meta_lines if l.startswith("推荐标题")), "")
     rec_text = ""
     if recommend_line:
