@@ -2,7 +2,8 @@
 
 把**近期热门的 AI 项目、Agent Skill、模型与科技热点**写成一篇能直接粘进公众号编辑器的文章——
 多源找选题、用公开信息把事实核准（不需要本机实测）、按项目手册 / 科普解读 / 清单合集 / 选型指南四种框架成稿、
-讲人话让外行读得懂、每篇都给读者一个能立刻用上的东西、给一组标题候选、出图、交付前过一遍版权与违规词。
+讲人话让外行读得懂、每篇都给读者一个能立刻用上的东西、给一组标题候选、用可商用素材照片加大字报排版出图、
+交付前过一遍版权与违规词。
 
 这是一个 [Codex Skill](https://docs.openai.com/)：把 `SKILL.md` 和配套脚本放进 skills 目录，
 之后直接说"看看最近有什么热门的 AI 技能，写成公众号文章"就能触发；也可以只把 `scripts/` 当普通工具链用。
@@ -20,7 +21,8 @@
 ![配图示例](docs/demo-figure.png)
 
 上面三张都是 `python scripts/design_kit.py demo` 生成的演示图，不是真实文章。
-封面也可以拿可商用照片做底、文字与图形靠代码压在上面（`design_kit.photo_bg()`）。
+现在的封面走**大字报串联排版**：可商用照片做底 + 大字逐字串联 + 阶梯错位 + 左侧动线，
+色板从照片里取（`design_kit.poster_cover_page` / `use_palette_from_photo`）。
 
 ## 四种文章框架
 
@@ -52,8 +54,8 @@
 | `scripts/github_skill_crawler.py` | 按关键词集抓 GitHub 仓库（`--set skill/ai/general/marketing/finance/trade`），`--allow-projects` 收更广的 AI 项目；README 走 raw 地址，不占 API 配额 |
 | `scripts/fetch_missing.py` | 被 GitHub 限流（HTTP 403）时按间隔只补没抓到的分类，再合并成候选清单 |
 | `scripts/pick_skills.py` | 按方向筛候选、剔除已收录仓库、按热度排序；`--any` 不限方向 |
-| `scripts/stock_photos.py` | 找可商用照片（Openverse / Pexels / Unsplash）、下载、自动写授权记录 |
-| `scripts/design_kit.py` | 出图基础件：色板、发光、箭头、点阵、图标、封面骨架、配图画框、照片底图 |
+| `scripts/stock_photos.py` | 找可商用照片：`--theme tech/ai/cyberpunk/code/robot/data/abstract` 题材预设、多来源自动兜底、下载并写授权记录、标出疑似 AI 生成素材 |
+| `scripts/design_kit.py` | 出图基础件与配色工具：从照片取色 `palette_from_photo`、对比度体检 `contrast_report`、大字报封面 `poster_cover_page`、照片底图、配图画框、色板与图形件 |
 | `scripts/render.py` | 本机 Chrome / Edge 无头渲染 HTML → PNG 或 JPEG（照片页面必须出 JPEG） |
 | `scripts/md2wechat.py` | Markdown → 公众号可粘贴的内联样式 HTML（版式规格见 `references/wechat-layout.md`） |
 | `scripts/qa.py` | 发布前自检：图片比例与体积、段落长度、颜色白名单、必备模块、禁用词、标题候选、AI 腔词表、标点频次、段落节奏、违规词与极限词、图片授权记录、**信息密度**、**有没有能照抄的东西**、**有没有没做过的第一人称实测** |
@@ -84,12 +86,12 @@ python _工作文件/github_skill_crawler.py readme --only owner/repo owner/repo
 # 4. 起标题（references/titles.md）→ 按框架写稿（references/editorial-rules.md +
 #    references/writing-craft.md + references/readability.md）→ 格式照 examples/
 
-# 5. 出图：官方图直接引用并注明来源，照片找 stock_photos，排版写 make_pages，渲染用 render
-python _工作文件/stock_photos.py search "server room dark" --top 8
+# 5. 出图：素材照片找 stock_photos（题材限定科技/AI/赛博朋克），取色 + 大字报封面写 make_pages
+python _工作文件/stock_photos.py search --theme cyberpunk --top 8 --min-width 1200
 python _工作文件/stock_photos.py pick 3 --used-in 封面
 python _工作文件/design_kit.py demo          # 先看基础件效果
 python _工作文件/render.py _工作文件/pages/cover-2x1.html 封面/封面_1276x544.jpg --width 1276 --height 544
-python _工作文件/render.py _工作文件/pages/fig1.html 配图/配图1_xxx.png --width 1080 --height 608
+python _工作文件/render.py _工作文件/pages/fig1.html 配图/配图1_xxx.jpg --width 1080 --height 608
 
 # 6. 转公众号 HTML + 自检
 python _工作文件/md2wechat.py 发布稿.md 公众号粘贴版.html
@@ -115,8 +117,13 @@ python _工作文件/qa.py 发布稿.md 公众号粘贴版.html      # 必须 0 
 - **四种框架，各有必答项。** 手册不写限制就不算手册，指南不给"什么时候别选它"读者就没法决定。
 - **合规前置。** 只用四类素材（官方材料、公开页面事实、短引用、可商用素材）；违规词、极限词、隐私、
   AI 生成标识按 `references/compliance.md` 执行，`qa.py` 会拦违规词并检查图片授权记录。
-- **配图分三类。** 官方 README / 文档 / 发布页里的图（引用并注明来源，可加红框引导）；可商用照片做底 + 代码排版
-  （照片页面输出 JPEG，体积从 700KB 降到 100–250KB）；纯代码画的图形骨架。
+- **配图与封面以可商用素材为底。** 素材照片做底 + 代码压字（封面、章节图、氛围图）；官方 README / 文档 / 发布页的图
+  做证据类插图（注明来源、可加红框、保留水印）；对照表与流程用代码画。**题材限定科技 / AI / 赛博朋克这条线**，
+  不用办公室绿植、咖啡杯这类通用商务图。照片页面一律输出 JPEG（体积从 700KB 降到 ≈100KB）。
+- **封面用大字报串联排版。** 每行 4–7 字、字间圆点串联、阶梯错位、左侧动线、最多点亮两处；
+  2.35:1 排两行长句，1:1 排三行短句。
+- **配色有逻辑，不靠感觉。** 从素材照片取色（底色同源、主色取自画面饱和色、点缀取第二色相）→ 明度校准到
+  可读区间（大字 ≥3:1、小字 ≥4.5:1）→ `contrast_report()` 体检两端底色；一期共用一个色板，色相不超过两个。
 - **版式固定，内容换新。** 排版规格（15px 正文、墨绿单一强调色、导语灰卡、小标题左绿条、13px 图注、
   不声明 font-family）固定；每期换的是结构、叙事、封面构图和配图骨架。
 - **每期给一组标题，而不是一个。** 6–8 条候选（1 条推荐 + 3–5 条备选），覆盖官方数据、门槛提示、场景痛点、
@@ -139,10 +146,11 @@ references/
   compliance.md               版权与合规：许可证、短引用、平台红线、极限词、图片授权、AI 标识
   titles.md                   标题候选：钩子类型表、起标题流程、写进元信息的格式
   wechat-layout.md            公众号排版规格、图片与署名、排版层面的去 AI 腔
-  visual-recipes.md           图片从哪来、官方图怎么用、照片做底怎么排、五套色板、体积预算、常见的坑
+  visual-recipes.md           素材从哪来（科技/AI/赛博朋克题材表）、选图标准、大字报串联封面、配色三步、体积预算、常见的坑
   qa-checklist.md             发布前自检清单（机器项 + 目视项 + 版权合规 + 交付汇报）
 scripts/                      九个工具（trend_radar / stock_photos / render 支持 JPEG 等）
 examples/
+  make_pages_demo.py          出图模板：封面两种尺寸 + 照片底配图 + 代码信息图，改文案即可跑
   sample-project-manual.md    项目手册的稿件格式示例
   sample-selection-guide.md   选型指南的稿件格式示例
   sample-article.md           清单合集的稿件格式示例

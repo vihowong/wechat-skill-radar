@@ -27,7 +27,7 @@ description: 把 AI 与科技领域的热点、GitHub 热门项目与 Agent Skil
 6. **每期给一组标题候选**：6–8 条，1 条推荐 + 3–5 条备选，覆盖至少 4 种钩子类型；推荐标题 ≤20 个汉字，不写标题党词与极限词，数字与正文一致。见 `references/titles.md`。
 7. **讲人话 + 能落地 + 去 AI 腔**：术语第一次出现就解释、每节开头先给结论、小标题写成结论或问题、数字给参照系；**每篇至少给一个读者能立刻用上的东西**——一条可照抄的命令、一个最小示例、一张对照表或一条决策规则，并写明前置条件与预期结果。禁用词与句式黑名单按 `references/writing-craft.md`，易懂细则与劝退清单见 `references/readability.md`，能机器查的部分由 `qa.py` 拦。
 8. **结尾固定**：结语 → 免责声明 → 平台引导。不加往期推荐，不加公众号名片。
-9. **配图分三类，按需选**：官方 README / 文档 / 发布页里的图（引用，注明来源，不裁水印）；可商用照片做底、文字与图形靠代码排版合成；纯代码画的图形骨架（清单与选型类的主体）。不出现第三方账号标识、logo、联系方式、水印；照片页面一律输出 JPEG。色板每期可换（`references/visual-recipes.md` 备了五套），但三个账号锚点不能动：封面右下角的账号小字、深底亮主色的明暗关系、封面的五件套信息骨架。
+9. **配图与封面以可商用图片素材为底**：封面、章节图和氛围图都用公开可商用的素材照片做底图，文字与图形靠代码压上去；证据类用官方 README / 文档 / 发布页里的图（引用、注明来源、保留水印）；对照表与流程这类信息图用代码画。**素材题材必须落在科技 / AI / 赛博朋克 / AI 领域这条线上**（机房、芯片、代码屏、霓虹夜景、机器人之类），不用办公室绿植、咖啡杯这类通用商务图。封面用**大字报串联排版**（`design_kit.poster_cover_page`：每行 4–7 字、字间圆点串联、阶梯错位、左侧动线、最多点亮两处）。**配色从素材照片取色再做对比度校准**（`design_kit.use_palette_from_photo` + `contrast_report`），保证同源、可读、符合明度层级；不出现第三方账号标识、logo、联系方式、水印；照片页面一律输出 JPEG。做法见 `references/visual-recipes.md`。
 10. **正文排版固定**用 `references/wechat-layout.md` 里那套规格（已经过用户确认），不要每期另起一套。
 11. **必答项不能省**：项目手册要答"它是什么 / 解决什么问题 / 怎么装怎么用 / 已知限制与坑（带来源）/ 适合谁"；科普解读要有一个类比、一处限制或争议、一句"跟我有什么关系"；选型指南要有一张对比表、三种场景建议、每个候选的"什么时候别选它"。清单里每一项都要能回答"装它要多久、装完第一步干什么、什么人不用装"。完整清单见 `references/editorial-rules.md`。
 12. **交付前必须 0 FAIL**：`qa.py` 的机器项（含违规词、极限词、图片授权记录）全过，目视项按 `references/qa-checklist.md` 逐条看。
@@ -40,7 +40,7 @@ description: 把 AI 与科技领域的热点、GitHub 热门项目与 Agent Skil
 <项目根>/
 ├── 发布稿.md                 # 主文件：元信息 + 正文 + 图片引用 + 结尾模块
 ├── 公众号粘贴版.html          # 交付：内联样式版
-├── 封面/                     # 封面_1276x544.jpg、封面_543x544.jpg（有照片底图就是 jpg）
+├── 封面/                     # 封面_1276x544.jpg、封面_543x544.jpg（照片做底，一律 jpg）
 ├── 配图/                     # 正文配图
 ├── 素材/
 │   ├── 热点雷达.md / .json   # trend_radar.py 产出的多源热门
@@ -90,15 +90,17 @@ description: 把 AI 与科技领域的热点、GitHub 热门项目与 Agent Skil
 4. **出图**
 
    ```
-   python _工作文件/stock_photos.py search "ai data center" --top 6
+   python _工作文件/stock_photos.py search --theme cyberpunk --top 8 --min-width 1200
+   python _工作文件/stock_photos.py search "server room dark blue" --top 8
    python _工作文件/stock_photos.py pick 1 --used-in 封面
-   python _工作文件/make_pages.py            # 当期自写：用 design_kit 的基础件排版
+   python _工作文件/make_pages.py            # 从 examples/make_pages_demo.py 复制过来改文案
    python _工作文件/render.py _工作文件/pages/cover-2x1.html 封面/封面_1276x544.jpg --width 1276 --height 544
-   python _工作文件/render.py _工作文件/pages/fig1.html 配图/配图1_xxx.png --width 1080 --height 608
+   python _工作文件/render.py _工作文件/pages/fig1.html 配图/配图1_xxx.jpg --width 1080 --height 608
    ```
 
-   官方文档或发布页里的图可以引用（裁掉无关部分、注明来源、不裁水印），放进 `配图/`；照片做底图的页面输出后缀写 `.jpg`
-   （同样画面 PNG 约 700KB、JPEG 约 100–250KB，这是体积预算的关键）。出图前读 `references/visual-recipes.md`。
+   出图前读 `references/visual-recipes.md`：题材关键词表、选图五条标准、大字报排版规则、配色三步
+   （取色 → 明度校准 → 对比度体检）。照片做底的页面输出后缀写 `.jpg`（同样画面 PNG 约 700KB、JPEG 约 100KB，
+   这是体积预算的关键）；官方文档或发布页里的图按证据类引用（注明来源、保留水印）。
 
 5. **交付与自检**
 
@@ -137,8 +139,10 @@ description: 把 AI 与科技领域的热点、GitHub 热门项目与 Agent Skil
 - `references/compliance.md` —— **版权与合规**：素材来源与许可证、短引用边界、平台红线、极限词与替换写法、图片授权与署名、AI 生成标识、免责声明。
 - `references/titles.md` —— 标题候选：钩子类型表、从 12 条草稿到 6–8 条候选的流程、标题与封面的分工。
 - `references/wechat-layout.md` —— 公众号内联样式版式规格（正文/标题/图片/图片署名/尾部）、排版层面的去 AI 腔、粘贴注意事项。
-- `references/visual-recipes.md` —— 图片从哪来、官方截图怎么用、照片做底怎么排、五套基调色板与账号锚点、体积预算、常见坑。
+- `references/visual-recipes.md` —— **图片素材与配色**：可商用图库怎么搜（科技 / AI / 赛博朋克题材表）、选图五条标准、大字报串联封面怎么排、配色三步（取色 / 校准 / 体检）与五套兜底色板、体积预算、常见坑。
 - `references/qa-checklist.md` —— 发布前自检清单（机器项 + 目视项 + 版权合规 + 交付汇报）。
+
+可复制的模板：`examples/make_pages_demo.py`（出图）、`examples/sample-project-manual.md` / `sample-selection-guide.md` / `sample-article.md`（稿件格式）。
 
 ## 附带脚本
 

@@ -55,6 +55,160 @@ def use_palette(**kw) -> None:
         g[name] = v
 
 
+# ------------------------------------------------ 配色：从素材照片里取色
+# 逻辑：底子（DEEP→BASE_L）从照片最暗的那一族色相里拉出一条明度阶，保证画面同源；
+# 主色（MINT）取照片里最有存在感的高饱和色；点缀（ORANGE）取画面里的第二色相，
+# 没有第二色相就用主色的互补色。这样"照片 + 文字"永远在同一套色系里，
+# 不会出现照片冷、标题暖各说各话的情况。用法见 references/visual-recipes.md 第四节。
+
+def hex_to_rgb(color: str) -> tuple[int, int, int]:
+    c = color.strip().lstrip("#")
+    if len(c) == 3:
+        c = "".join(ch * 2 for ch in c)
+    return tuple(int(c[i:i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
+
+
+def rgb_to_hex(rgb) -> str:
+    r, g, b = (max(0, min(255, int(round(v)))) for v in rgb)
+    return f"#{r:02X}{g:02X}{b:02X}"
+
+
+def _hls(color: str) -> tuple[float, float, float]:
+    import colorsys
+    r, g, b = hex_to_rgb(color)
+    return colorsys.rgb_to_hls(r / 255, g / 255, b / 255)  # (h, l, s)
+
+
+def _from_hls(h: float, l: float, s: float) -> str:
+    import colorsys
+    r, g, b = colorsys.hls_to_rgb(h % 1.0, max(0.0, min(1.0, l)), max(0.0, min(1.0, s)))
+    return rgb_to_hex((r * 255, g * 255, b * 255))
+
+
+def _luminance(color: str) -> float:
+    def channel(v: float) -> float:
+        v /= 255
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+    r, g, b = hex_to_rgb(color)
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+
+
+def contrast_ratio(fg: str, bg: str) -> float:
+    """WCAG 对比度。正文 ≥4.5，大标题 ≥3.0 就够看。"""
+    a, b = _luminance(fg), _luminance(bg)
+    hi, lo = max(a, b), min(a, b)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def ensure_contrast(fg: str, bg: str, target: float = 4.5) -> str:
+    """把前景色往亮/往暗推到目标对比度，返回新色值（不满足就返回最接近的）。"""
+    if contrast_ratio(fg, bg) >= target:
+        return fg.upper()
+    h, l, s = _hls(fg)
+    bg_dark = _luminance(bg) < 0.5
+    for step in range(1, 21):
+        nl = l + step * 0.045 if bg_dark else l - step * 0.045
+        if not 0 <= nl <= 1:
+            break
+        cand = _from_hls(h, nl, s)
+        if contrast_ratio(cand, bg) >= target:
+            return cand.upper()
+    return "#FFFFFF" if bg_dark else "#000000"
+
+
+def palette_from_photo(path, sample: int = 8, deep_l: float = 0.055, base_l: float = 0.30) -> dict:
+    """从素材照片里抽出一套能直接 use_palette 的色板。
+
+    返回 dict：deep / navy / mid / base / base_l / mint / mint_hi / mint_d / orange。
+    需要 Pillow；读不出图时退回当前默认色板。
+    """
+    try:
+        from PIL import Image
+    except Exception:  # noqa: BLE001
+        return {}
+    try:
+        im = Image.open(path).convert("RGB")
+        im.thumbnail((240, 240))
+        quant = im.quantize(colors=sample, method=Image.Quantize.FASTOCTREE)
+        pal = quant.getpalette() or []
+        entries = [(cnt, tuple(pal[i * 3:i * 3 + 3])) for cnt, i in quant.getcolors()]
+    except Exception:  # noqa: BLE001
+        return {}
+    if not entries:
+        return {}
+    entries.sort(reverse=True)
+    total = sum(c for c, _ in entries) or 1
+    cols = [(c / total, rgb_to_hex(rgb)) for c, rgb in entries]
+
+    # 底色：占比最高的那一族里，取明度最低的色相当骨架
+    dark_key = min((hexv for _, hexv in cols), key=lambda c: _luminance(c))
+    h_base, _, s_base = _hls(dark_key)
+    sat_base = min(0.42, max(0.10, s_base * 0.85))
+    palette = {
+        "deep": _from_hls(h_base, deep_l, sat_base * 0.7),
+        "navy": _from_hls(h_base, deep_l + 0.035, sat_base * 0.85),
+        "mid": _from_hls(h_base, (deep_l + base_l) / 2, sat_base),
+        "base": _from_hls(h_base, base_l, sat_base),
+        "base_l": _from_hls(h_base, min(0.42, base_l + 0.06), sat_base),
+    }
+
+    # 主色：饱和度高、又不太暗的那个色相
+    def accent_score(hexv: str) -> float:
+        _, l, s = _hls(hexv)
+        return s * (0.35 + l)
+    h_acc, l_acc, s_acc = _hls(max((hexv for _, hexv in cols), key=accent_score))
+    sat_acc = max(0.55, s_acc)
+    palette["mint"] = _from_hls(h_acc, max(0.52, min(0.62, l_acc)), sat_acc)
+    palette["mint_hi"] = _from_hls(h_acc, min(0.78, max(0.66, l_acc + 0.14)), sat_acc)
+    palette["mint_d"] = _from_hls(h_acc, max(0.34, min(0.46, l_acc - 0.12)), sat_acc)
+
+    # 点缀色：优先用照片里的第二个色相，没有就用主色的互补色
+    others = [hexv for _, hexv in cols
+              if abs((_hls(hexv)[0] - h_acc + 0.5) % 1.0 - 0.5) > 0.16]
+    if others:
+        h_alt = _hls(max(others, key=accent_score))[0]
+    else:
+        h_alt = h_acc + 0.5
+    palette["orange"] = _from_hls(h_alt, 0.64, 0.78)
+
+    # 明度校准：色相照照片走，明度按可读性推（并封顶，避免主色被推成白色）。
+    # 大字用 3.0 就够，正文小字才需要 4.5。
+    palette["mint"] = ensure_contrast(palette["mint"], palette["base_l"], 3.0)
+    palette["mint_hi"] = ensure_contrast(palette["mint_hi"], palette["base_l"], 3.5)
+    palette["mint_d"] = palette["mint_d"].upper()
+    palette["orange"] = ensure_contrast(palette["orange"], palette["base_l"], 3.2)
+    return palette
+
+
+def use_palette_from_photo(path, **overrides) -> dict:
+    """从照片取色并直接换掉本期色板；overrides 可再手动压某一项（如 orange="#FF7A59"）。"""
+    pal = palette_from_photo(path)
+    pal.update(overrides)
+    if pal:
+        use_palette(**pal)
+    return pal
+
+
+def contrast_report(bg: str | None = None) -> list[tuple[str, float]]:
+    """对比度体检：标题/正文/点缀色在底色上是否够看（正文 ≥4.5，大字 ≥3.0）。
+
+    不传 bg 就把最暗端（DEEP）和亮端（BASE_L）都测一遍——封面文字压在上面时，
+    照片被压暗的区域接近 DEEP，卡片区域接近 BASE_L，两边都要过。
+    """
+    bgs = [bg] if bg else [DEEP, BASE_L]
+    rows: list[tuple[str, float]] = []
+    for b in bgs:
+        print(f"底色 {b}：")
+        for name, color in (("大标题 TXT", TXT), ("主色标题 MINT_HI", MINT_HI),
+                            ("主色 MINT", MINT), ("次级文案 SUB", SUB),
+                            ("点缀 ORANGE", ORANGE)):
+            ratio = contrast_ratio(color, b)
+            flag = "OK" if ratio >= 4.5 else ("大字可用" if ratio >= 3.0 else "偏弱，换色值")
+            print(f"  {name:<18} {ratio:4.2f}:1  {flag}")
+            rows.append((f"{name}@{b}", ratio))
+    return rows
+
+
 # ---------------------------------------------------------------- 基础图形
 def svg(w, h, body, defs=""):
     return (f'<svg viewBox="0 0 {w} {h}" width="100%" height="100%" '
@@ -96,6 +250,56 @@ def txt(x, y, s, size=14, fill=None, weight="400", anchor="start", family=None, 
     g = f' filter="url(#gl-{glow.replace("#", "")})"' if glow else ""
     return (f'<text x="{x}" y="{y}" font-size="{size}" fill="{fill or TXT}" font-weight="{weight}" '
             f'text-anchor="{anchor}"{fam}{lsp}{o}{st}{g}>{s}</text>')
+
+
+# ------------------------------------------------------ 大字报：串联排版
+def _adv_units(ch: str) -> float:
+    """字符宽度（以字号为单位）：中文/全角按 1，ASCII 按 0.6，空格按 0.35。"""
+    if ch == " ":
+        return 0.35
+    return 0.6 if ord(ch) < 0x2E80 else 1.0
+
+
+def _chain_layout(s: str, size: float, gap_ratio: float):
+    """算出一行里每个字的落点与整行宽度，供 chain_line 使用。"""
+    gap = size * gap_ratio
+    pos, cursor = [], 0.0
+    for i, ch in enumerate(s):
+        w = _adv_units(ch) * size
+        pos.append((ch, cursor, w))
+        cursor += w + (gap if i < len(s) - 1 else 0)
+    return pos, cursor
+
+
+def chain_line(x, y, s, size, color=None, dot_color=None, gap_ratio=0.18, align="start",
+               weight="800", dot_ratio=0.055, hi_color=None, hi_words=(), glow=None, op=1.0):
+    """一行"大字报"串联字：逐字排布，字间用小圆点串起来。
+
+    hi_words —— 要点亮的字/词（用主色），对应位置同时发光
+    返回 (svg 片段, 整行宽度)，宽度可用来做自动字号。
+    """
+    pos, total = _chain_layout(s, size, gap_ratio)
+    start = x - total / 2 if align == "middle" else (x - total if align == "end" else x)
+    gap = size * gap_ratio
+    flags = [False] * len(pos)
+    for word in hi_words or ():
+        if not word:
+            continue
+        idx = s.find(word)
+        while idx >= 0:
+            for k in range(idx, idx + len(word)):
+                flags[k] = True
+            idx = s.find(word, idx + len(word))
+    body = ""
+    for i, (ch, off, w) in enumerate(pos):
+        lit = flags[i] and hi_color
+        if ch != " ":
+            body += txt(start + off, y, ch, size, lit or color, weight, "start",
+                        glow=(glow if lit else None), op=op)
+        if i < len(pos) - 1:
+            body += circle(start + off + w + gap / 2, y - size * 0.33,
+                           max(1.5, size * dot_ratio), dot_color or color, op=0.9)
+    return body, total
 
 
 def rrect(x, y, w, h, r, fill, stroke="none", sw=1.5, dash=None, op=None, glow=None, extra=""):
@@ -232,35 +436,44 @@ SHELL = """<!doctype html>
 </html>"""
 
 
-def photo_bg(photo, dark=0.6):
+def photo_bg(photo, dark=0.6, blur=0.0, focus="left"):
     """照片底图 + 色板遮罩：照片压暗、统一色偏后，正文与标题才压得住。
 
     photo 传相对路径时以写出的 HTML 文件为基准（pages/xxx.html 引素材用 "../../素材/图库/xx.jpg"）。
     dark 越大越暗（0.5 干净的场景照，0.7–0.8 画面很杂或文字很多时）。
+    blur 给背景一点柔化（2–4px 够），画面越花越有用——文字会更跳出来。
+    focus  "left" 左重右轻（封面用：左边压暗放标题，右边留出照片）；
+           "uniform" 整屏均匀压暗（配图用：文字和图形铺满时要保证哪一块都能读）。
     压暗分两层：色板色偏 + 一层纯黑渐变，避免照片里的高亮细节跟标题抢注意力。
     """
     tint = round(min(1.0, dark * 0.62), 3)              # 色板色偏，保住账号色
-    scrim = [round(min(0.97, 0.55 + dark * 0.55), 3),   # 文字区（左侧）压到接近纯色
-             round(min(0.92, 0.32 + dark * 0.46), 3),
-             round(min(0.85, dark * 0.38), 3)]           # 右侧留出照片，避免整张糊成一块
+    if focus == "uniform":
+        shade = round(min(0.95, 0.32 + dark * 0.66), 3)
+        scrim = (f"linear-gradient(180deg,rgba(4,8,14,{shade}) 0%,"
+                 f"rgba(4,8,14,{round(min(0.97, shade + 0.06), 3)}) 100%)")
+    else:
+        scrim = (f"linear-gradient(100deg,"
+                 f"rgba(4,8,14,{round(min(0.97, 0.55 + dark * 0.55), 3)}) 0%,"
+                 f"rgba(4,8,14,{round(min(0.92, 0.32 + dark * 0.46), 3)}) 46%,"
+                 f"rgba(4,8,14,{round(min(0.85, dark * 0.38), 3)}) 100%)")
     return (
         f'<div style="position:absolute;inset:0;background-image:url(\'{photo}\');'
         f'background-size:cover;background-position:center;'
-        f'filter:saturate(.75) brightness(.85) contrast(1.04)"></div>'
+        f'filter:saturate(.75) brightness(.85) contrast(1.04)'
+        f'{f" blur({blur:g}px)" if blur else ""}"></div>'
         f'<div style="position:absolute;inset:0;background:'
         f'linear-gradient(133deg,{rgba(BASE_L, tint)} 0%,{rgba(MID, tint)} 46%,'
         f'{rgba(DEEP, tint)} 100%),'
         f'radial-gradient(110% 130% at 6% -10%,{rgba(MINT, .16)} 0%,rgba(MINT, 0) 46%)"></div>'
-        f'<div style="position:absolute;inset:0;background:linear-gradient(100deg,'
-        f'rgba(4,8,14,{scrim[0]}) 0%,rgba(4,8,14,{scrim[1]}) 46%,'
-        f'rgba(4,8,14,{scrim[2]}) 100%)"></div>'
+        f'<div style="position:absolute;inset:0;background:{scrim}"></div>'
     )
 
 
-def page(title, w, h, body, grid=True, pitch=34, gop=0.035, photo=None, dark=0.6):
+def page(title, w, h, body, grid=True, pitch=34, gop=0.035, photo=None, dark=0.6, blur=0.0,
+         focus="left"):
     layers = ""
     if photo:
-        layers += photo_bg(photo, dark)
+        layers += photo_bg(photo, dark, blur, focus)
     if grid:
         layers += f'<div class="grid">{svg_fixed(w, h, dot_grid(w, h, pitch=pitch, op=gop))}</div>'
     layers += '<div class="vignette"></div>'
@@ -270,7 +483,7 @@ def page(title, w, h, body, grid=True, pitch=34, gop=0.035, photo=None, dark=0.6
 
 # ---------------------------------------------------------------- 画框与封面
 def figure_page(w, h, code, category, title, art, footer_left="", footer_total=7,
-                photo=None, dark=0.72):
+                photo=None, dark=0.78, blur=2.0, focus="uniform"):
     """配图画框：左上 F 角标 + 类别 + 大标题，中部是 art（另画），底部 mono 页脚。
 
     photo 给了照片时，照片只做底图（会被压暗到 dark），文字与图形仍然靠代码画。
@@ -296,7 +509,7 @@ def figure_page(w, h, code, category, title, art, footer_left="", footer_total=7
     </div>
   </div>
 """
-    return page(code, w, h, body, photo=photo, dark=dark)
+    return page(code, w, h, body, photo=photo, dark=dark, blur=blur, focus=focus)
 
 
 def cover_page(w, h, mark_svg, eyebrow, title, subtitle, chips, footer_left,
@@ -374,6 +587,94 @@ def cover_page(w, h, mark_svg, eyebrow, title, subtitle, chips, footer_left,
               border-radius: 50%; background: {MINT}; margin-right: {'9' if wide else '6'}px; }}
 """
     return page("cover", w, h, body, photo=photo, dark=dark).replace("</style>", css + "</style>")
+
+
+def poster_cover_page(w, h, photo, title, subtitle="", tags=None, footer_left="",
+                      brand_line="", kicker="", hi_words=(), dark=0.80, layout=None,
+                      rail=True, chain=True, blur=2.5, stair=0.14, hi_color=None):
+    """大字报封面：整屏素材照片做底，主标题按行大字串联，左侧竖线把各行串成一条动线。
+
+    title    —— 用 \\n 分行；每行 4–7 字最稳（越长字号自动变小）
+    hi_words —— 要换主色点亮的字或词，例如 ["41 分钟"]，也可以直接传字符串
+    hi_color —— 点亮用的颜色，默认主色 MINT_HI；主色偏浅（跟白色差别不大）时传点缀色更跳
+    kicker   —— 标题上方的一行小标签（短）
+    tags     —— 标题下方的一行关键词，渲染成「A · B · C」
+    chain    —— True 时字与字之间用小圆点串联（每行建议 ≤7 字，太长就关掉）
+    rail     —— 左侧一条竖线 + 每行一个节点，形成阅读动线
+    stair    —— 每行相对上一行右移的比例（相对字号），做出阶梯式串联；0 就是齐头排
+    blur     —— 背景柔化像素数；画面很花时 2–4 会让大字更跳
+    """
+    wide = (layout or ("wide" if w / h > 1.6 else "square")) == "wide"
+    lines = [ln.strip() for ln in str(title).split("\n") if ln.strip()]
+    if not lines:
+        lines = [""]
+    hi = [hi_words] if isinstance(hi_words, str) else list(hi_words or ())
+    tags = list(tags or ())
+    hi_color = hi_color or MINT_HI
+
+    pad = 76 if wide else 36
+    rail_x = pad + 8
+    text_x = rail_x + (44 if rail else 0)
+    avail = w - text_x - pad
+    gap_ratio = 0.18 if chain else 0.02
+
+    units = [sum(_adv_units(c) for c in ln) + gap_ratio * max(0, len(ln) - 1) for ln in lines]
+    max_size, min_size = (108.0, 38.0) if wide else (64.0, 28.0)
+    size = round(max(min_size, min(max_size, avail / (max(units) or 1))), 1)
+
+    line_h = size * 1.16
+    sub_size = 21 if wide else 15
+    tag_size = 15 if wide else 12.5
+    block_h = line_h * len(lines) + (44 if subtitle else 0) + (32 if tags else 0)
+    y0 = (h - block_h) / 2 + size * 0.80
+    y_last = y0 + (len(lines) - 1) * line_h
+
+    sub_color = ensure_contrast(SUB, DEEP, 4.5)
+    tag_color = ensure_contrast(DIM, DEEP, 4.0)
+
+    art = ""
+    # 左侧动线：竖线 + 每行一个节点（节点与点亮词同色，一张图里只出现一个强调色）
+    if rail:
+        top, bottom = y0 - size * 0.36, y_last - size * 0.36
+        if bottom - top > 2:
+            art += line(rail_x, top, rail_x, bottom, rgba(hi_color, 0.45), 3)
+        for i in range(len(lines)):
+            cy = y0 + i * line_h - size * 0.36
+            art += circle(rail_x, cy, max(4.0, size * 0.07), hi_color, glow=hi_color)
+    else:
+        art += rrect(rail_x - 4, y0 - size * 0.86, 6, size * 0.95, 3, hi_color)
+
+    if kicker:
+        art += line(text_x, y0 - size * 1.30, text_x + 26, y0 - size * 1.30, hi_color, 3)
+        art += txt(text_x + 38, y0 - size * 1.24, kicker, 15 if wide else 12.5,
+                   ensure_contrast(SUB, DEEP, 4.5), "600", ls=".12em")
+
+    for i, ln in enumerate(lines):
+        y = y0 + i * line_h
+        x = text_x + (size * stair * i if stair else 0)
+        if chain:
+            part, _ = chain_line(x, y, ln, size, TXT, hi_color, gap_ratio,
+                                 hi_color=hi_color, hi_words=hi, glow=hi_color)
+            art += part
+        else:
+            art += txt(x, y, ln, size, TXT, "800", ls=".02em")
+
+    y_sub = y_last + (58 if wide else 40)
+    if subtitle:
+        art += txt(text_x, y_sub, subtitle, sub_size, sub_color, "500")
+    if tags:
+        art += txt(text_x, y_sub + (34 if subtitle else 0), " · ".join(tags),
+                   tag_size, tag_color, "600", ls=".06em")
+
+    body = (f'<div style="position:absolute;left:0;top:0;width:{w}px;height:{h}px">'
+            f'{svg_fixed(w, h, art, glow_defs([MINT_HI, MINT, ORANGE, TXT, hi_color]))}</div>'
+            f'<div style="position:absolute;left:{pad}px;right:{pad}px;bottom:28px;display:flex;'
+            f'align-items:center;justify-content:space-between">'
+            f'<span style="font-family:{MONO};font-size:11.5px;letter-spacing:.13em;'
+            f'color:{tag_color}">{footer_left}</span>'
+            f'<span style="font-size:13px;color:{ensure_contrast(SUB, DEEP, 4.5)}">{brand_line}</span>'
+            f"</div>")
+    return page("cover-poster", w, h, body, photo=photo, dark=dark, blur=blur)
 
 
 # ---------------------------------------------------------------- 看效果
