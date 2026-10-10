@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import sys
 import time
@@ -31,6 +32,8 @@ import github_skill_crawler as g  # noqa: E402
 
 SETS = {
     "general": lambda: g.INDUSTRY_QUERIES,
+    "skill": lambda: g.SKILL_QUERIES,
+    "ai": lambda: g.AI_QUERIES,
     "marketing": lambda: g.MARKETING_QUERIES,
     "finance": lambda: g.FINANCE_QUERIES,
     "trade": lambda: g.TRADE_QUERIES,
@@ -47,11 +50,17 @@ def main() -> None:
     ap.add_argument("--max-age-days", type=int, default=45)
     ap.add_argument("--gap", type=float, default=7.5, help="两次请求之间的间隔秒数")
     ap.add_argument("--cache-hours", type=float, default=6, help="跳过多新的缓存")
+    ap.add_argument("--allow-projects", action="store_true", help="与 search 保持一致")
+    ap.add_argument("--new-days", type=int, default=90)
+    ap.add_argument("--min-stars", type=int, default=100)
     args = ap.parse_args()
 
     queries = SETS[args.query_set]()
+    since = (dt.date.today() - dt.timedelta(days=args.new_days)).isoformat()
     missing = []
     for industry, query in queries.items():
+        if "{" in query:
+            query = query.format(since=since, stars=args.min_stars)
         path = g.RAW_DIR / f"search_{g.slug(industry)}.json"
         if path.exists() and (time.time() - path.stat().st_mtime) < args.cache_hours * 3600:
             print(f"[skip] {industry}")
@@ -82,7 +91,8 @@ def main() -> None:
             time.sleep(args.gap)
 
     print("--- 合并候选 ---")
-    g.run_search(False, args.max_age_days, args.query_set)
+    g.run_search(False, args.max_age_days, args.query_set,
+                 args.allow_projects, args.new_days, args.min_stars)
 
 
 if __name__ == "__main__":

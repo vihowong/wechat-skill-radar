@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""发布前自检：排版一致性、图片比例与体积、段落长度、必备模块、禁用元素、标题候选、AI 腔。
+"""发布前自检：排版一致性、图片比例与体积、段落长度、必备模块、禁用元素、标题候选、
+AI 腔、违规词与极限词、图片授权记录。
 
 用法：python qa.py 发布稿.md 公众号粘贴版.html
 
@@ -17,9 +18,15 @@
       "ai_soft_max": 2,
       "em_dash_max": 8,                             // 破折号「——」上限
       "field_dash_max": 3,                          // 同一个字段里用「——」接续的段数上限
-      "exclaim_max": 2                              // 感叹号上限
+      "exclaim_max": 2,                             // 感叹号上限
+      "image_ratio": "strict",                      // strict=配图比例必须一致；loose=只报警（实测截图类用）
+      "max_total_mb": 3,                            // 配图总体积上限（MB）
+      "compliance_hard": ["国家级", ...],           // 违规/极限词，出现即 FAIL
+      "compliance_soft": ["最强", ...],             // 需要人工判断的夸张词，出现只报警
+      "license_record": "素材/图库/图片来源.md"       // 图库素材的授权记录文件
     }
-不写就用下面的默认值；改版式时记得同步改 colors。写作口径见 references/writing-craft.md。
+不写就用下面的默认值；改版式时记得同步改 colors。写作口径见 references/writing-craft.md，
+版权与违规口径见 references/compliance.md。
 """
 
 from __future__ import annotations
@@ -55,6 +62,20 @@ DEFAULT_EXCLAIM_MAX = 2
 DEFAULT_FLAT_RUN_MAX = 2          # 连续等长段落的窗口数上限
 DEFAULT_REPEAT_MAX = 4            # 同一句式开头（前 4 字）最多出现的段落数
 
+# 合规词，口径见 references/compliance.md
+# 硬禁用：广告法极限词与承诺性说法，正常写科技稿几乎不会用到
+DEFAULT_COMPLIANCE_HARD = ["国家级", "世界级", "最高级", "绝无仅有", "史无前例", "万能",
+                           "稳赚", "血赚", "抄底", "月入过万", "包治", "无效退款", "躺赚"]
+# 软提醒：需要人工判断的夸张词与高风险词，报告里会带上下文
+DEFAULT_COMPLIANCE_SOFT = ["最强", "最好", "最佳", "最便宜", "最先进", "首个", "顶级", "极致",
+                           "绝对", "无敌", "封神", "炸裂", "闭眼入", "全网最",
+                           "第一品牌", "销量第一", "全球唯一", "唯一的选择",
+                           "100%", "永久免费", "破解", "外挂", "翻墙", "代写", "换脸",
+                           "deepfake", "私彩"]
+DEFAULT_IMAGE_RATIO = "strict"
+DEFAULT_MAX_TOTAL_MB = 3.0
+DEFAULT_LICENSE_RECORD = "素材/图库/图片来源.md"
+
 
 def _merge(base: list[str], extra) -> list[str]:
     return base + [w for w in (extra or []) if w not in base]
@@ -78,6 +99,11 @@ def load_config(root: Path) -> dict:
         "exclaim_max": DEFAULT_EXCLAIM_MAX,
         "flat_run_max": DEFAULT_FLAT_RUN_MAX,
         "repeat_max": DEFAULT_REPEAT_MAX,
+        "compliance_hard": list(DEFAULT_COMPLIANCE_HARD),
+        "compliance_soft": list(DEFAULT_COMPLIANCE_SOFT),
+        "image_ratio": DEFAULT_IMAGE_RATIO,
+        "max_total_mb": DEFAULT_MAX_TOTAL_MB,
+        "license_record": DEFAULT_LICENSE_RECORD,
     }
     p = root / "qa_config.json"
     if p.exists():
@@ -92,6 +118,14 @@ def load_config(root: Path) -> dict:
         cfg["title_ban"] = _merge(cfg["title_ban"], data.get("title_ban"))
         cfg["ai_hard"] = _merge(cfg["ai_hard"], data.get("ai_hard"))
         cfg["ai_soft"] = _merge(cfg["ai_soft"], data.get("ai_soft"))
+        cfg["compliance_hard"] = _merge(cfg["compliance_hard"], data.get("compliance_hard"))
+        cfg["compliance_soft"] = _merge(cfg["compliance_soft"], data.get("compliance_soft"))
+        if data.get("image_ratio"):
+            cfg["image_ratio"] = str(data["image_ratio"])
+        if data.get("license_record"):
+            cfg["license_record"] = str(data["license_record"])
+        if data.get("max_total_mb") is not None:
+            cfg["max_total_mb"] = float(data["max_total_mb"])
         for key in ("titles_min", "recommend_max_len", "ai_soft_max", "em_dash_max",
                     "field_dash_max", "exclaim_max", "flat_run_max", "repeat_max"):
             if data.get(key) is not None:
@@ -99,12 +133,34 @@ def load_config(root: Path) -> dict:
     return cfg
 
 
-def png_size(path: Path) -> tuple[int, int]:
+def img_size(path: Path) -> tuple[int, int]:
+    """读 PNG / JPEG 的像素尺寸；读不出来时返回 (0, 0)（跳过比例检查）。"""
     with path.open("rb") as fh:
-        head = fh.read(24)
-    if head[:8] != b"\x89PNG\r\n\x1a\n":
-        return (0, 0)
-    return struct.unpack(">II", head[16:24])
+        head = fh.read(32)
+        if head[:8] == b"\x89PNG\r\n\x1a\n":
+            return struct.unpack(">II", head[16:24])
+        if head[:2] != b"\xff\xd8":
+            return (0, 0)
+        fh.seek(2)
+        while True:
+            byte = fh.read(1)
+            while byte and byte != b"\xff":
+                byte = fh.read(1)
+            marker = fh.read(1)
+            while marker == b"\xff":
+                marker = fh.read(1)
+            if not marker:
+                return (0, 0)
+            code = marker[0]
+            if code in (0xD8, 0xD9) or 0xD0 <= code <= 0xD7:
+                continue
+            length = int.from_bytes(fh.read(2), "big")
+            if 0xC0 <= code <= 0xCF and code not in (0xC4, 0xC8, 0xCC):
+                fh.read(1)                                   # 精度
+                height = int.from_bytes(fh.read(2), "big")
+                width = int.from_bytes(fh.read(2), "big")
+                return (width, height)
+            fh.seek(length - 2, 1)
 
 
 def main() -> None:
@@ -125,6 +181,8 @@ def main() -> None:
     # 1. 禁用元素（只查正文：Markdown 的 > 元信息与 HTML 注释不算）
     md_body = "\n".join(l for l in md.splitlines() if not l.startswith(">"))
     html_body = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+    # 只查可见文字：HTML 属性里全是 width:100%、color:#0E7C66 这类东西，会把"100%"当成违规词
+    html_text = re.sub(r"<[^>]+>", " ", html_body)
     hits = [(w, md_body.count(w) + html_body.count(w)) for w in cfg["forbidden"]]
     hits = [(w, n) for w, n in hits if n]
     if hits:
@@ -155,7 +213,7 @@ def main() -> None:
         if not p.exists():
             missing.append(src)
             continue
-        w, h = png_size(p)
+        w, h = img_size(p)
         if h:
             ratios.append(round(w / h, 2))
         total += p.stat().st_size
@@ -164,11 +222,16 @@ def main() -> None:
     if ratios:
         uniq = sorted(set(ratios))
         if len(uniq) > 1:
-            fails.append(f"正文配图比例不一致：{uniq}")
+            if cfg["image_ratio"] == "loose":
+                warns.append(f"正文配图比例不一致：{uniq}（image_ratio=loose，实测截图可以按内容裁）")
+            else:
+                fails.append(f"正文配图比例不一致：{uniq}（实测类截图请在 qa_config.json 里设 "
+                             f'"image_ratio": "loose"）')
         else:
             passes.append(f"配图比例一致：{uniq[0]}:1 × {len(ratios)} 张")
         mb = total / 1024 / 1024
-        (passes if mb <= 3 else fails).append(f"配图总体积 {mb:.2f}MB（上限 3MB）")
+        (passes if mb <= cfg["max_total_mb"] else fails).append(
+            f"配图总体积 {mb:.2f}MB（上限 {cfg['max_total_mb']:g}MB）")
 
     # 4. 结构完整性
     # 本期按链路组织，刻意不设「本文要点」；只校验必备的首尾模块
@@ -224,7 +287,7 @@ def main() -> None:
         warns.append(f"推荐标题 {len(rec_text)} 字，建议 ≤{cfg['recommend_max_len']} 字（列表页容易截断）")
 
     # 7. AI 腔：硬禁用词 FAIL，慎用词超标 WARN（清单见 references/writing-craft.md）
-    tone_text = md_body + "\n" + html_body
+    tone_text = md_body + "\n" + html_text
     hard = [(w, tone_text.count(w)) for w in cfg["ai_hard"]]
     hard = [(w, n) for w, n in hard if n]
     if hard:
@@ -282,6 +345,50 @@ def main() -> None:
             warns.append(f"有 {n} 段以「{top}…」开头（句式重复，换几种起句）")
         else:
             passes.append(f"句式不重复：最高重复开头「{top}…」{n} 段")
+
+    # 10. 违规词与极限词（口径见 references/compliance.md）
+    tone_all = md_body + "\n" + html_text + "\n" + "\n".join(meta_lines)
+    hard_c = [(w, tone_all.count(w)) for w in cfg["compliance_hard"]]
+    hard_c = [(w, n) for w, n in hard_c if n]
+    if hard_c:
+        fails.append("出现违规/极限词：" + "、".join(f"{w}×{n}" for w, n in hard_c)
+                     + "（换成可核对的写法，见 references/compliance.md）")
+    soft_hits = []
+    for w in cfg["compliance_soft"]:
+        for m in re.finditer(re.escape(w), tone_all):
+            seg = tone_all[max(0, m.start() - 12):m.start() + 14].replace("\n", " ")
+            soft_hits.append(f"{w}（…{seg}…）")
+    if soft_hits:
+        warns.append("需要人工判断的夸张/高风险词：" + "；".join(soft_hits[:6])
+                     + (f"（共 {len(soft_hits)} 处）" if len(soft_hits) > 6 else "")
+                     + "——要么改写，要么确认有依据、不在敏感场景")
+    # 敏感场景要不要补边界句
+    risk_topics = {"投资": "不构成任何投资建议", "股票": "不构成任何投资建议",
+                   "基金": "不构成任何投资建议", "诊断": "不构成任何专业建议",
+                   "用药": "不构成任何专业建议", "法律意见": "不构成任何专业建议"}
+    if not soft_hits and not hard_c:
+        passes.append("无违规/极限词，慎用词 0 处")
+    need = [topic for topic, phrase in risk_topics.items()
+            if topic in tone_all and phrase not in md]
+    if need:
+        warns.append("涉及敏感场景但没写边界句：" + "、".join(sorted(set(need)))
+                     + "（补一句「本文不构成任何投资/专业建议」）")
+
+    # 11. 图库素材必须有授权记录（口径见 references/compliance.md 第四节）
+    lib_refs = set(re.findall(r"素材/图库/([^\"')\s]+\.(?:png|jpe?g|webp))", md + html, re.I))
+    if lib_refs:
+        rec_path = md_path.parent / cfg["license_record"]
+        if not rec_path.exists():
+            fails.append(f"用了图库素材但没有授权记录：缺 {cfg['license_record']}"
+                         f"（跑 stock_photos.py pick / record 生成）")
+        else:
+            rec_text = rec_path.read_text(encoding="utf-8")
+            unlogged = sorted(f for f in lib_refs if f not in rec_text)
+            if unlogged:
+                fails.append("图库素材没有登记授权：" + "、".join(unlogged)
+                             + "（跑 stock_photos.py record 补登记）")
+            else:
+                passes.append(f"图库素材 {len(lib_refs)} 张，授权记录齐全")
 
     print("=" * 70)
     print(f"发布自检　{md_path.name} / {html_path.name}")

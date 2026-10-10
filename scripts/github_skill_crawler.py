@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""抓取 GitHub 上各行业热门 Agent Skill 仓库，供公众号选题与写作使用。
+"""抓取 GitHub 上的热门 Agent Skill 与 AI 项目，供公众号选题与写作使用。
 
 思路：
-  1. 按行业关键词调用 GitHub Search API（仓库搜索），结果缓存到 素材/raw/；
-  2. 客户端过滤：必须与 Skill/Agent 相关，且近期有更新；
+  1. 按关键词集调用 GitHub Search API（仓库搜索），结果缓存到 素材/raw/；
+  2. 客户端过滤：必须与 Skill/Agent 相关（`--allow-projects` 时放宽到 AI 项目），且近期有更新；
   3. 对入选仓库抓 README（走 raw.githubusercontent.com，不占 API 配额），存到 素材/readmes/；
   4. 输出候选清单 素材/候选技能清单.json / .csv 与一份 Markdown 摘要。
 
@@ -13,6 +13,7 @@
 
 用法：
     python github_skill_crawler.py search          # 只跑搜索与候选筛选
+    python github_skill_crawler.py search --set ai --allow-projects   # 收更广的 AI 项目
     python github_skill_crawler.py readme          # 只跑 README 抓取（读候选清单）
     python github_skill_crawler.py all             # 全流程（默认）
     python github_skill_crawler.py search --refresh   # 忽略缓存重新搜索
@@ -69,6 +70,39 @@ SKILL_HINT = re.compile(
     r"skill|agent|claude|codex|copilot|plugin|workflow|prompt",
     re.I,
 )
+
+# `--allow-projects` 时用的宽松过滤：只要与 AI 相关就收，不要求是技能。
+AI_HINT = re.compile(
+    r"\bai\b|artificial intelligence|agent|llm|gpt|claude|gemini|llama|qwen|deepseek|"
+    r"model|neural|machine learning|deep learning|diffusion|transformer|mcp|rag|"
+    r"inference|multimodal|speech|text-to-(image|video)|robot|embedding|fine-?tun",
+    re.I,
+)
+
+# 技能类：按主题标签收，命中更准
+SKILL_QUERIES: dict[str, str] = {
+    "通用技能库": "topic:agent-skills",
+    "Claude技能": "topic:claude-skills",
+    "Codex技能": "topic:codex-skills",
+    "MCP": "topic:mcp-server",
+    "Claude Code": "topic:claude-code",
+    "提示词与工作流": "prompt workflow skill in:name,description",
+    "Agent框架": "topic:ai-agent",
+}
+
+# AI 项目类：不限于技能，收近期新项目与各方向热门项目
+# 带 {since}/{stars} 的查询会按 --new-days 与 --min-stars 填参数
+AI_QUERIES: dict[str, str] = {
+    "新项目冲刺": "created:>={since} stars:>{stars}",
+    "大模型": "topic:llm pushed:>{since} stars:>{stars}",
+    "Agent": "topic:ai-agent pushed:>{since} stars:>{stars}",
+    "MCP生态": "topic:mcp pushed:>{since} stars:>{stars}",
+    "编程助手": "topic:ai-coding pushed:>{since} stars:>{stars}",
+    "语音与音频": "topic:text-to-speech pushed:>{since} stars:>{stars}",
+    "图像与视频生成": "topic:text-to-video pushed:>{since} stars:>{stars}",
+    "本地推理": "topic:llama-cpp pushed:>{since} stars:>{stars}",
+    "检索增强": "topic:rag pushed:>{since} stars:>{stars}",
+}
 
 # 营销专题：按细分职能搜索，避免只搜"marketing"一个词导致结果同质化
 MARKETING_QUERIES: dict[str, str] = {
@@ -162,16 +196,24 @@ def days_since(iso: str) -> int:
     return (dt.datetime.now(dt.timezone.utc) - t).days
 
 
-def run_search(refresh: bool, max_age_days: int, query_set: str = "general") -> list[dict]:
+def run_search(refresh: bool, max_age_days: int, query_set: str = "general",
+               allow_projects: bool = False, new_days: int = 90,
+               min_stars: int = 100) -> list[dict]:
     items: dict[str, dict] = {}
     SETS = {
         "general": INDUSTRY_QUERIES,
+        "skill": SKILL_QUERIES,
+        "ai": AI_QUERIES,
         "marketing": MARKETING_QUERIES,
         "finance": FINANCE_QUERIES,
         "trade": TRADE_QUERIES,
     }
     queries = SETS.get(query_set, INDUSTRY_QUERIES)
+    since = (dt.date.today() - dt.timedelta(days=new_days)).isoformat()
+    hint = AI_HINT if allow_projects else SKILL_HINT
     for idx, (industry, query) in enumerate(queries.items()):
+        if "{" in query:
+            query = query.format(since=since, stars=min_stars)
         url = (
             "https://api.github.com/search/repositories?q="
             + urllib.parse.quote(query)
@@ -201,7 +243,7 @@ def run_search(refresh: bool, max_age_days: int, query_set: str = "general") -> 
                     " ".join(repo.get("topics") or []),
                 ]
             )
-            if not SKILL_HINT.search(blob):
+            if not hint.search(blob):
                 continue
             if days_since(repo.get("pushed_at", "")) > max_age_days:
                 continue
@@ -313,7 +355,7 @@ def write_summary(candidates: list[dict]) -> None:
         f"- 抓取时间：{dt.datetime.now().strftime('%Y-%m-%d %H:%M')}",
         f"- 候选仓库：{len(candidates)} 个",
         "",
-        "| 热度 | 星标 | 仓库 | 最近更新 | 行业 | 简介 |",
+        "| 热度 | 星标 | 仓库 | 最近更新 | 方向/标签 | 简介 |",
         "| --- | --- | --- | --- | --- | --- |",
     ]
     for rec in candidates[:60]:
@@ -345,11 +387,17 @@ def main() -> None:
     ap.add_argument("--top", type=int, default=40, help="抓 README 的仓库数量")
     ap.add_argument("--only", nargs="*", help="只抓指定仓库的 README，如 owner/repo")
     ap.add_argument("--set", dest="query_set", default="general",
-                    choices=["general", "marketing", "finance", "trade"], help="搜索词集合")
+                    choices=["general", "skill", "ai", "marketing", "finance", "trade"],
+                    help="搜索词集合：general=各行业技能，skill=技能主题标签，ai=更广的 AI 项目")
+    ap.add_argument("--allow-projects", action="store_true",
+                    help="放宽过滤：收非技能的 AI 项目（名字或描述里要有 AI 相关信号）")
+    ap.add_argument("--new-days", type=int, default=90, help="--set ai 的建库/活跃窗口")
+    ap.add_argument("--min-stars", type=int, default=100, help="--set ai 的星标下限")
     args = ap.parse_args()
 
     if args.mode in ("search", "all"):
-        candidates = run_search(args.refresh, args.max_age_days, args.query_set)
+        candidates = run_search(args.refresh, args.max_age_days, args.query_set,
+                                args.allow_projects, args.new_days, args.min_stars)
     else:
         candidates = json.loads(CANDIDATE_JSON.read_text(encoding="utf-8"))
 

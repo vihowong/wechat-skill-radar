@@ -6,6 +6,7 @@
 
     python _工作文件/pick_skills.py --list-industries
     python _工作文件/pick_skills.py 金融
+    python _工作文件/pick_skills.py --any --top 20        # 不限方向，看全部候选
     python _工作文件/pick_skills.py 设计 --covered 已收录仓库.txt --top 20
     python _工作文件/pick_skills.py 科研 --json > 素材/候选_科研.json
 
@@ -60,6 +61,7 @@ def main() -> None:
         pass
     ap = argparse.ArgumentParser(description="按行业挑当期候选")
     ap.add_argument("industry", nargs="?", help="行业名，如 金融 / 设计 / 科研")
+    ap.add_argument("--any", action="store_true", help="不限方向，直接按热度排全部候选")
     ap.add_argument("--candidates", default=str(DEFAULT_CAND), help="候选清单 json")
     ap.add_argument("--covered", help="已收录仓库清单，每行一个 owner/repo")
     ap.add_argument("--top", type=int, default=15)
@@ -78,19 +80,19 @@ def main() -> None:
         for rec in data:
             for k in industries_of(rec):
                 tally[k] = tally.get(k, 0) + 1
-        print(f"候选共 {len(data)} 个仓库，涉及 {len(tally)} 个行业：")
+        print(f"候选共 {len(data)} 个仓库，涉及 {len(tally)} 个方向/标签：")
         for k, n in sorted(tally.items(), key=lambda kv: -kv[1]):
             print(f"  {k:<12} {n:>3} 个")
         return
 
-    if not args.industry:
-        raise SystemExit("要指定行业名；先加 --list-industries 看看有哪些可选。")
+    if not args.industry and not args.any:
+        raise SystemExit("要指定方向名（先加 --list-industries 看看有哪些），或者用 --any 看全部。")
 
     covered = load_covered(args.covered)
     rows = []
     for rec in data:
         keys = industries_of(rec)
-        if not match(keys, args.industry):
+        if args.industry and not match(keys, args.industry):
             continue
         if rec["full_name"].lower() in covered:
             continue
@@ -104,15 +106,15 @@ def main() -> None:
         print(json.dumps(rows, ensure_ascii=False, indent=2))
         return
 
-    print(f"行业「{args.industry}」可选题材 {len(rows)} 个"
-          f"（已剔除 {len(covered)} 个已收录仓库）\n")
+    scope = f"方向「{args.industry}」" if args.industry else "全部方向"
+    print(f"{scope}可选题材 {len(rows)} 个（已剔除 {len(covered)} 个已收录仓库）\n")
     for r in rows:
         print(f"{r.get('stars', 0):>7}  {r['full_name']:<46} {r.get('pushed_at', '')}  "
               f"[{'/'.join(industries_of(r))}]")
         print(f"         {(r.get('description') or '')[:88]}")
     if rows:
         names = " ".join(r["full_name"] for r in rows[:10])
-        print(f"\n下一步（先定好 8–10 个再抓）：\n"
+        print(f"\n下一步（清单类先定好 8–10 个再抓；单项目深挖只抓主角加 1–3 个对照）：\n"
               f"  python _工作文件/github_skill_crawler.py readme --only {names}")
 
 

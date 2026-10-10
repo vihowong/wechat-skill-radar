@@ -232,8 +232,35 @@ SHELL = """<!doctype html>
 </html>"""
 
 
-def page(title, w, h, body, grid=True, pitch=34, gop=0.035):
+def photo_bg(photo, dark=0.6):
+    """照片底图 + 色板遮罩：照片压暗、统一色偏后，正文与标题才压得住。
+
+    photo 传相对路径时以写出的 HTML 文件为基准（pages/xxx.html 引素材用 "../../素材/图库/xx.jpg"）。
+    dark 越大越暗（0.5 干净的场景照，0.7–0.8 画面很杂或文字很多时）。
+    压暗分两层：色板色偏 + 一层纯黑渐变，避免照片里的高亮细节跟标题抢注意力。
+    """
+    tint = round(min(1.0, dark * 0.62), 3)              # 色板色偏，保住账号色
+    scrim = [round(min(0.97, 0.55 + dark * 0.55), 3),   # 文字区（左侧）压到接近纯色
+             round(min(0.92, 0.32 + dark * 0.46), 3),
+             round(min(0.85, dark * 0.38), 3)]           # 右侧留出照片，避免整张糊成一块
+    return (
+        f'<div style="position:absolute;inset:0;background-image:url(\'{photo}\');'
+        f'background-size:cover;background-position:center;'
+        f'filter:saturate(.75) brightness(.85) contrast(1.04)"></div>'
+        f'<div style="position:absolute;inset:0;background:'
+        f'linear-gradient(133deg,{rgba(BASE_L, tint)} 0%,{rgba(MID, tint)} 46%,'
+        f'{rgba(DEEP, tint)} 100%),'
+        f'radial-gradient(110% 130% at 6% -10%,{rgba(MINT, .16)} 0%,rgba(MINT, 0) 46%)"></div>'
+        f'<div style="position:absolute;inset:0;background:linear-gradient(100deg,'
+        f'rgba(4,8,14,{scrim[0]}) 0%,rgba(4,8,14,{scrim[1]}) 46%,'
+        f'rgba(4,8,14,{scrim[2]}) 100%)"></div>'
+    )
+
+
+def page(title, w, h, body, grid=True, pitch=34, gop=0.035, photo=None, dark=0.6):
     layers = ""
+    if photo:
+        layers += photo_bg(photo, dark)
     if grid:
         layers += f'<div class="grid">{svg_fixed(w, h, dot_grid(w, h, pitch=pitch, op=gop))}</div>'
     layers += '<div class="vignette"></div>'
@@ -242,8 +269,12 @@ def page(title, w, h, body, grid=True, pitch=34, gop=0.035):
 
 
 # ---------------------------------------------------------------- 画框与封面
-def figure_page(w, h, code, category, title, art, footer_left="", footer_total=7):
-    """配图画框：左上 F 角标 + 类别 + 大标题，中部是 art（另画），底部 mono 页脚。"""
+def figure_page(w, h, code, category, title, art, footer_left="", footer_total=7,
+                photo=None, dark=0.72):
+    """配图画框：左上 F 角标 + 类别 + 大标题，中部是 art（另画），底部 mono 页脚。
+
+    photo 给了照片时，照片只做底图（会被压暗到 dark），文字与图形仍然靠代码画。
+    """
     defs = glow_defs([MINT, MINT_HI, ORANGE]) + arrow_defs([MINT, ORANGE])
     head = svg_fixed(
         320, 60,
@@ -265,11 +296,11 @@ def figure_page(w, h, code, category, title, art, footer_left="", footer_total=7
     </div>
   </div>
 """
-    return page(code, w, h, body)
+    return page(code, w, h, body, photo=photo, dark=dark)
 
 
 def cover_page(w, h, mark_svg, eyebrow, title, subtitle, chips, footer_left,
-               brand_line="", highlight=None, layout=None):
+               brand_line="", highlight=None, layout=None, photo=None, dark=0.62):
     """封面骨架，按尺寸自动切两种版式。
 
     wide（2.35:1，1276×544）：左侧图形 + 右侧左对齐标题，标题下一条主色短下划线
@@ -279,6 +310,7 @@ def cover_page(w, h, mark_svg, eyebrow, title, subtitle, chips, footer_left,
     title     —— 用 \\n 换行，例如 "按你要干的活\\n挑 10 个 AI 技能"
     highlight —— 标题里要换主色点亮的片段，例如 "10"
     chips     —— ["画图", "写字", …] 渲染成一排圆角标签
+    photo     —— 可商用照片的相对路径（做底图，会被压暗）；文字与图形仍是代码画的
     """
     wide = (layout or ("wide" if w / h > 1.6 else "square")) == "wide"
     head = "<br>".join(title.split("\n"))
@@ -341,7 +373,7 @@ def cover_page(w, h, mark_svg, eyebrow, title, subtitle, chips, footer_left,
   .chips .c::before {{ content: ""; width: {'7' if wide else '6'}px; height: {'7' if wide else '6'}px;
               border-radius: 50%; background: {MINT}; margin-right: {'9' if wide else '6'}px; }}
 """
-    return page("cover", w, h, body).replace("</style>", css + "</style>")
+    return page("cover", w, h, body, photo=photo, dark=dark).replace("</style>", css + "</style>")
 
 
 # ---------------------------------------------------------------- 看效果
