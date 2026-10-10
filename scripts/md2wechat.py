@@ -57,7 +57,7 @@ def heading(text: str, level: int) -> list[str]:
 
 
 def figure(path: str, caption: str) -> list[str]:
-    # 实测截图可以不带图注：写 ![](配图/xxx.png)。外部素材（图库照片、他人截图）必须
+    # 官方截图与界面图可以不带图注：写 ![](配图/xxx.png)。外部素材（图库照片、官方图）必须
     # 在图注或紧跟的一行里署名，见 references/compliance.md。
     if caption:
         return ['<section style="text-align: center; margin: 0 0 8px;">',

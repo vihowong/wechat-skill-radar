@@ -276,7 +276,7 @@ def add_link(url: str, note: str, title: str = "") -> None:
             fh.write(f"- 标题：{title}\n")
         fh.write(f"- 链接：{url}\n")
         fh.write(f"- 为什么值得写：{note or '（待补）'}\n")
-        fh.write("- 需要补的数字：转发 / 点赞 / 作者给出的实测值\n")
+        fh.write("- 需要补的数字：转发 / 点赞 / 作者给出的数字\n")
     log(f"已记入 {LINKS_MD}")
 
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """发布前自检：排版一致性、图片比例与体积、段落长度、必备模块、禁用元素、标题候选、
-AI 腔、违规词与极限词、图片授权记录。
+AI 腔、违规词与极限词、图片授权记录、信息密度、可执行的东西、有没有没做过的第一人称实测。
 
 用法：python qa.py 发布稿.md 公众号粘贴版.html
 
@@ -19,11 +19,14 @@ AI 腔、违规词与极限词、图片授权记录。
       "em_dash_max": 8,                             // 破折号「——」上限
       "field_dash_max": 3,                          // 同一个字段里用「——」接续的段数上限
       "exclaim_max": 2,                             // 感叹号上限
-      "image_ratio": "strict",                      // strict=配图比例必须一致；loose=只报警（实测截图类用）
+      "image_ratio": "strict",                      // strict=配图比例必须一致；loose=只报警（官方截图类用）
       "max_total_mb": 3,                            // 配图总体积上限（MB）
       "compliance_hard": ["国家级", ...],           // 违规/极限词，出现即 FAIL
       "compliance_soft": ["最强", ...],             // 需要人工判断的夸张词，出现只报警
       "license_record": "素材/图库/图片来源.md"       // 图库素材的授权记录文件
+      "density_per_chars": 300,                     // 每多少字至少要有 1 个可核对的东西
+      "evidence_file": "素材/资料与出处.md"           // 事实与出处记录；写了自测句要有它
+      "min_usable_items": 1                         // 正文至少要有几个"能照抄"的东西
     }
 不写就用下面的默认值；改版式时记得同步改 colors。写作口径见 references/writing-craft.md，
 版权与违规口径见 references/compliance.md。
@@ -75,6 +78,21 @@ DEFAULT_COMPLIANCE_SOFT = ["最强", "最好", "最佳", "最便宜", "最先进
 DEFAULT_IMAGE_RATIO = "strict"
 DEFAULT_MAX_TOTAL_MB = 3.0
 DEFAULT_LICENSE_RECORD = "素材/图库/图片来源.md"
+DEFAULT_DENSITY_PER_CHARS = 300
+DEFAULT_EVIDENCE_FILE = "素材/资料与出处.md"
+DEFAULT_MIN_USABLE_ITEMS = 1
+# "能照抄"的东西：命令、步骤、链接、表格、配置项
+USABLE_PATTERNS = [
+    r"`[^`\n]{2,80}`",                       # 反引号里的命令 / 参数
+    r"(?m)^\s*\d+[.、)]\s+\S",                # 编号步骤
+    r"https?://\S+",                        # 链接
+    r"(?m)^\s*\|.*\|\s*$",                   # 表格行
+    r"\b(?:npx|npm|pnpm|yarn|pip|uv|git clone|docker|curl|brew|winget)\b",
+    r"→|->",                                 # 输入 → 输出
+]
+# 没真跑过就别写的第一人称实测句（真的跑过要有 素材/资料与出处.md 里的"自测"标记）
+MEASURE_PHRASES = ["我装了", "我装了一遍", "我跑了一遍", "我跑了一轮", "我实测", "我测了",
+                   "实测下来", "我自己跑", "我试了一遍"]
 
 
 def _merge(base: list[str], extra) -> list[str]:
@@ -104,6 +122,9 @@ def load_config(root: Path) -> dict:
         "image_ratio": DEFAULT_IMAGE_RATIO,
         "max_total_mb": DEFAULT_MAX_TOTAL_MB,
         "license_record": DEFAULT_LICENSE_RECORD,
+        "density_per_chars": DEFAULT_DENSITY_PER_CHARS,
+        "evidence_file": DEFAULT_EVIDENCE_FILE,
+        "min_usable_items": DEFAULT_MIN_USABLE_ITEMS,
     }
     p = root / "qa_config.json"
     if p.exists():
@@ -124,10 +145,13 @@ def load_config(root: Path) -> dict:
             cfg["image_ratio"] = str(data["image_ratio"])
         if data.get("license_record"):
             cfg["license_record"] = str(data["license_record"])
+        if data.get("evidence_file"):
+            cfg["evidence_file"] = str(data["evidence_file"])
         if data.get("max_total_mb") is not None:
             cfg["max_total_mb"] = float(data["max_total_mb"])
         for key in ("titles_min", "recommend_max_len", "ai_soft_max", "em_dash_max",
-                    "field_dash_max", "exclaim_max", "flat_run_max", "repeat_max"):
+                    "field_dash_max", "exclaim_max", "flat_run_max", "repeat_max",
+                    "density_per_chars", "min_usable_items"):
             if data.get(key) is not None:
                 cfg[key] = int(data[key])
     return cfg
@@ -223,9 +247,9 @@ def main() -> None:
         uniq = sorted(set(ratios))
         if len(uniq) > 1:
             if cfg["image_ratio"] == "loose":
-                warns.append(f"正文配图比例不一致：{uniq}（image_ratio=loose，实测截图可以按内容裁）")
+                warns.append(f"正文配图比例不一致：{uniq}（image_ratio=loose，官方截图可以按内容裁）")
             else:
-                fails.append(f"正文配图比例不一致：{uniq}（实测类截图请在 qa_config.json 里设 "
+                fails.append(f"正文配图比例不一致：{uniq}（官方截图类请在 qa_config.json 里设 "
                              f'"image_ratio": "loose"）')
         else:
             passes.append(f"配图比例一致：{uniq[0]}:1 × {len(ratios)} 张")
@@ -389,6 +413,42 @@ def main() -> None:
                              + "（跑 stock_photos.py record 补登记）")
             else:
                 passes.append(f"图库素材 {len(lib_refs)} 张，授权记录齐全")
+
+    # 12. 信息密度：每 density_per_chars 字至少一个可核对的东西（数字 / 命令 / 链接 / 英文名）
+    readable = "\n".join(paras)
+    if len(readable) >= cfg["density_per_chars"]:
+        anchors = (len(re.findall(r"\d[\d.,]*", readable))
+                   + len(re.findall(r"[`「][^`」]{2,40}[`」]", readable))
+                   + len(re.findall(r"https?://\S+|\b[\w-]+\.(?:com|cn|org|io|ai|dev)\b", readable))
+                   + len(re.findall(r"[A-Za-z][A-Za-z0-9_.-]{2,}", readable)))
+        need = len(readable) / cfg["density_per_chars"]
+        if anchors < need:
+            warns.append(f"信息密度偏低：约 {int(need)} 个 300 字窗口里只有 {anchors} 个可核对的"
+                         f"东西（数字 / 命令 / 链接 / 项目名），补足再交付")
+        else:
+            passes.append(f"信息密度：{anchors} 个可核对项 / {len(readable)} 字")
+
+    # 13. 能落地：正文里至少要有几个"能照抄"的东西（命令 / 步骤 / 链接 / 表格）
+    usable = 0
+    for pattern in USABLE_PATTERNS:
+        usable += len(re.findall(pattern, md_body))
+    if usable < cfg["min_usable_items"]:
+        warns.append(f"正文里能照抄的东西只有 {usable} 个（命令 / 步骤 / 链接 / 表格），"
+                     f"至少给 {cfg['min_usable_items']} 个，否则读者读完不知道能做什么")
+    else:
+        passes.append(f"可落地：正文有 {usable} 处能照抄的东西")
+
+    # 14. 不伪造实测：写了第一人称实测句，却没有自测记录
+    measure_hits = sorted({p for p in MEASURE_PHRASES if p in md_body})
+    if measure_hits:
+        ev = md_path.parent / cfg["evidence_file"]
+        marked = ev.exists() and "自测" in ev.read_text(encoding="utf-8")
+        if marked:
+            passes.append("出现第一人称实测句，但素材里有自测记录（自测那部分照实写）")
+        else:
+            warns.append("出现第一人称实测句：" + "、".join(measure_hits)
+                         + f"，但 {cfg['evidence_file']} 里没有自测记录——没真跑过就改成资料口径"
+                         "（如「文档里写着」「README 给的示例是」）")
 
     print("=" * 70)
     print(f"发布自检　{md_path.name} / {html_path.name}")
