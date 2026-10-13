@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
-"""当期出图模板：封面（大字报串联）+ 配图（照片做底 / 代码信息图）。
+"""当期出图模板：封面（方案 A 大字报串联 / 方案 B 黑底主体 + 右侧粗白字）+ 配图（照片做底 / 代码信息图）。
+
+**封面两方案二选一，一期只用一种**：清单与盘点类用 B（列表页里最跳），科普与选型类用 A（要氛围）。
+方案 B 在文件末尾的 `main_block()` 里，默认不跑；要用就把 `__main__` 里那行取消注释。
 
 用法（在当期项目的 _工作文件/ 里，或把这几个文件放平在同级目录）：
 
@@ -99,8 +102,48 @@ def main() -> None:
         art_tbl, footer_left="框架 · 来源", photo=PHOTO_FIG,
     ), encoding="utf-8")
 
-    print(f"已写出 {PAGES} 下的 cover-2x1 / cover-1x1 / fig1 / fig2")
+    print(f"已写出 {PAGES} 下的 cover-2x1 / cover-1x1 / cover-b-2x1 / cover-b-1x1 / fig1 / fig2")
+
+
+def main_block() -> None:
+    """封面方案 B：黑底主体 + 右侧粗白字（清单与盘点类首选）。
+
+    与方案 A **二选一**，不要同期混用。末行放进彩色实心块是这套封面的记忆点。
+    做法来自对标账号「逛逛GitHub」的封面公式，见 references/benchmark-guangguang-github.md 第四节。
+    """
+    # 左侧主体：用基础件拼一个立体件（也可以换成抠好的素材照片主体）
+    subject = (dk.card_stack(200, 268, 1.15)
+               + dk.spark(330, 150, 12, dk.ORANGE, glow=True))
+
+    # 2.35:1：2–3 行，每行 4–6 字，末行在色块里
+    (PAGES / "cover-b-2x1.html").write_text(dk.block_cover_page(
+        1276, 544,
+        title="装它只要一条命令\n但要先有 Node",
+        block_words=["但要先有 Node"],          # 这一行会变成彩色块 + 白字
+        kicker="项目手册 · 10 分钟上手",
+        subject_svg=subject,
+        block_color=dk.ORANGE,
+        footer_left="GITHUB · README SNAPSHOT",
+        brand_line="● 你的skill好友",            # 账号锚点，位置不要动
+    ), encoding="utf-8")
+
+    # 1:1：自动切成上下排布（主体在上、文字在下），不用手动调。
+    # 方图里主体请放在**上方约 35%** 以内，否则会压到 kicker 与标题。
+    (PAGES / "cover-b-1x1.html").write_text(dk.block_cover_page(
+        543, 544,
+        title="装它只要\n一条命令\n先有 Node",
+        block_words=["先有 Node"],
+        kicker="项目手册",
+        subject_svg=dk.card_stack(110, 105, 0.62),
+        block_color=dk.ORANGE,
+        footer_left="README",
+        brand_line="● 你的skill好友",
+    ), encoding="utf-8")
+
+    print(f"已写出 {PAGES} 下的 cover-b-2x1 / cover-b-1x1（方案 B）")
 
 
 if __name__ == "__main__":
     main()
+    # 想用方案 B 就再跑一次（两套都写出来只为对照，正式出图只留一套）：
+    # main_block()

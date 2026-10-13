@@ -9,8 +9,10 @@ AI 腔、违规词与极限词、图片授权记录、信息密度、可执行�
     {
       "forbidden": ["旧品牌名", "旧脚本名"],        // 出现即 FAIL
       "colors": ["#0E7C66", "#0F172A", ...],        // 正文允许出现的文字颜色
+      "accent": "#0E7C66",                          // 全篇唯一强调色（章节编号用它）
       "install_prefixes": ["**装它**"],             // 这些开头的段落是命令行，不计入长度
       "max_paragraph": 110,
+      "paragraph_median_hint": 80,                  // 段落中位数超过它就提醒（对标约 34 字）
       "titles_min": 6,                              // 元信息里标题候选的最少条数
       "recommend_max_len": 20,                      // 推荐标题字数上限（超过只报警）
       "ai_hard": ["赋能", ...],                     // AI 腔硬禁用词，出现即 FAIL
@@ -43,8 +45,12 @@ from pathlib import Path
 # 默认禁用词：自己账号的旧标识（旧品牌名、旧配色、旧脚本名）加到这里
 DEFAULT_FORBIDDEN = ["往期推荐", "公众号名片", "扫码关注", "点击上方蓝字"]
 DEFAULT_COLORS = {"#0E7C66", "#0F172A", "#1F2937", "#374151", "#6B7280", "#FFFFFF"}
+DEFAULT_ACCENT = "#0E7C66"          # 全篇唯一的强调色（章节编号与加粗共用）
 DEFAULT_INSTALL_PREFIXES = ("**装它**",)
 DEFAULT_MAX_PARAGRAPH = 110
+# 段落节奏：对标账号「逛逛GitHub」的段落中位数是 34 字（20 篇实测），几乎一句一段。
+# 我们不强制这么短，但中位数超过这个值就提醒——段落越长，手机上越难读下去。
+DEFAULT_PARAGRAPH_MEDIAN_HINT = 80
 
 # 标题党词：出现在标题里即 FAIL
 DEFAULT_TITLE_BAN = ["震惊", "必看", "宝藏", "神器", "YYDS", "绝了", "速看", "限时",
@@ -104,8 +110,10 @@ def load_config(root: Path) -> dict:
     cfg = {
         "forbidden": list(DEFAULT_FORBIDDEN),
         "colors": set(DEFAULT_COLORS),
+        "accent": DEFAULT_ACCENT,
         "install_prefixes": tuple(DEFAULT_INSTALL_PREFIXES),
         "max_paragraph": DEFAULT_MAX_PARAGRAPH,
+        "paragraph_median_hint": DEFAULT_PARAGRAPH_MEDIAN_HINT,
         "title_ban": list(DEFAULT_TITLE_BAN),
         "titles_min": DEFAULT_TITLES_MIN,
         "recommend_max_len": DEFAULT_RECOMMEND_MAX_LEN,
@@ -133,9 +141,12 @@ def load_config(root: Path) -> dict:
         cfg["forbidden"] += [w for w in data.get("forbidden", []) if w not in cfg["forbidden"]]
         if data.get("colors"):
             cfg["colors"] = {c.upper() for c in data["colors"]}
+        if data.get("accent"):
+            cfg["accent"] = str(data["accent"])
         if data.get("install_prefixes"):
             cfg["install_prefixes"] = tuple(data["install_prefixes"])
         cfg["max_paragraph"] = int(data.get("max_paragraph", DEFAULT_MAX_PARAGRAPH))
+        cfg["paragraph_median_hint"] = int(data.get("paragraph_median_hint", DEFAULT_PARAGRAPH_MEDIAN_HINT))
         cfg["title_ban"] = _merge(cfg["title_ban"], data.get("title_ban"))
         cfg["ai_hard"] = _merge(cfg["ai_hard"], data.get("ai_hard"))
         cfg["ai_soft"] = _merge(cfg["ai_soft"], data.get("ai_soft"))
@@ -223,10 +234,25 @@ def main() -> None:
     if lens:
         avg = sum(lens) / len(lens)
         longest = max(lens)
+        median = sorted(lens)[len(lens) // 2]
         if longest > cfg["max_paragraph"]:
             warns.append(f"有段落偏长：最长 {longest} 字（建议 ≤{cfg['max_paragraph']}）")
         else:
-            passes.append(f"段落长度：平均 {avg:.0f} 字、最长 {longest} 字")
+            passes.append(f"段落长度：平均 {avg:.0f} 字、中位 {median} 字、最长 {longest} 字")
+        # 段落节奏：对标账号几乎一句一段（中位 34 字）。段落普遍偏长时读者会跳读。
+        if median > cfg["paragraph_median_hint"]:
+            warns.append(f"段落偏长：中位 {median} 字（对标账号约 34 字，建议多拆句分段）")
+
+    # 2b. 图片密度：对标账号是 6.2 张/千字（每 2–3 段一张图），图文比是它读起来不累的关键
+    body_chars = sum(len(p) for p in paras)
+    n_imgs = len(re.findall(r"!\[.*?\]\(.+?\)", md))
+    if body_chars >= 600:
+        per_k = n_imgs / body_chars * 1000
+        if per_k < 2.0:
+            warns.append(f"配图偏少：{n_imgs} 张 / {body_chars} 字（约 {per_k:.1f} 张每千字，"
+                         f"对标账号约 6.2 张；建议每 2–3 段插一张）")
+        else:
+            passes.append(f"图文比：{n_imgs} 张 / {body_chars} 字（约 {per_k:.1f} 张每千字）")
 
     # 3. 图片比例与体积
     imgs = re.findall(r"<img[^>]+src=\"([^\"]+)\"", html)
@@ -265,17 +291,33 @@ def main() -> None:
     if not fails:
         passes.append("首尾模块齐全：导语、结语、免责声明（不设要点与往期推荐）")
 
-    # 5. 内联样式（第一期版式：15px / 行高 1.75 / 字距 0.02em）
-    if "letter-spacing: 0.02em" in html and "line-height: 1.75" in html:
-        passes.append("正文内联样式已注入（15px / 行高 1.75 / 字距 0.02em）")
+    # 5. 内联样式（版式：15px / 行高 2em / 字距 0.034em / 左右 8px 缩进）
+    #    行高 2em 与 8px 缩进取自对标账号「逛逛GitHub」的实测规格，
+    #    见 references/benchmark-guangguang-github.md 第二节。
+    if "letter-spacing: 0.034em" in html and "line-height: 2em" in html:
+        passes.append("正文内联样式已注入（15px / 行高 2em / 字距 0.034em）")
     else:
-        fails.append("正文内联样式缺失")
+        fails.append("正文内联样式缺失（应为 15px / 行高 2em / 字距 0.034em）")
+    if "margin: 0 8px 16px" in html:
+        passes.append("正文左右缩进 8px、段间距 16px")
     colors = set(re.findall(r"(?<![\w-])color:\s*(#[0-9A-Fa-f]{3,6})", html))
     bad = {c for c in colors if c.upper() not in cfg["colors"]}
     if bad:
         warns.append("出现约定外的文字颜色：" + "、".join(sorted(bad)))
     else:
         passes.append(f"文字颜色只用约定色：{'、'.join(sorted(colors))}")
+
+    # 5b. 章节编号：用了 `## 01 标题` 就检查编号件有没有渲染出来
+    md_nums = re.findall(r"(?m)^##\s+(\d{2})\s+\S", md)
+    if md_nums:
+        if "font-size: 28px" in html and f"color: {cfg.get('accent', '#0E7C66')}" in html:
+            passes.append(f"章节编号 {len(md_nums)} 处已渲染为大号单色编号（{md_nums[0]} … {md_nums[-1]}）")
+        else:
+            fails.append(f"有 {len(md_nums)} 处 `## NN 标题`，但编号样式没渲染出来")
+        if len(md_nums) > 1:
+            want = [f"{i:02d}" for i in range(1, len(md_nums) + 1)]
+            if md_nums != want:
+                warns.append(f"章节编号不连续：{'、'.join(md_nums)}（建议 01…{len(md_nums):02d}）")
 
     # 6. 标题候选（写在 Markdown 的 > 元信息里，口径见 references/titles.md）
     meta_lines = [l[2:].strip() for l in md.splitlines() if l.startswith("> ")]

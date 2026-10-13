@@ -420,10 +420,7 @@ SHELL = """<!doctype html>
   body {{ font-family: {font}; color: {txt}; -webkit-font-smoothing: antialiased; }}
   .canvas {{
     position: relative; overflow: hidden; width: {w}px; height: {h}px;
-    background:
-      radial-gradient(110% 130% at 6% -10%, rgba(58,201,143,.20) 0%, rgba(58,201,143,0) 46%),
-      radial-gradient(90% 110% at 100% 108%, rgba(255,122,89,.10) 0%, rgba(255,122,89,0) 55%),
-      linear-gradient(133deg, {base_l} 0%, {base} 18%, {mid} 46%, {navy} 74%, {deep} 100%);
+    background: {canvas_bg};
   }}
   .grid {{ position: absolute; inset: 0; }}
   .vignette {{ position: absolute; inset: 0;
@@ -469,8 +466,18 @@ def photo_bg(photo, dark=0.6, blur=0.0, focus="left"):
     )
 
 
+DEFAULT_CANVAS_BG = ("radial-gradient(110% 130% at 6% -10%, rgba(58,201,143,.20) 0%, rgba(58,201,143,0) 46%), "
+                     "radial-gradient(90% 110% at 100% 108%, rgba(255,122,89,.10) 0%, rgba(255,122,89,0) 55%), "
+                     "linear-gradient(133deg, {base_l} 0%, {base} 18%, {mid} 46%, {navy} 74%, {deep} 100%)")
+
+
 def page(title, w, h, body, grid=True, pitch=34, gop=0.035, photo=None, dark=0.6, blur=0.0,
-         focus="left"):
+         focus="left", flat_bg=None):
+    """画布外壳。flat_bg 给了纯色时改用纯色底（封面方案 B 的黑底用它），
+    同时关掉色板渐变、点阵与暗角——那三样都是给照片底与色板底用的。"""
+    if flat_bg:
+        return SHELL.format(title=title, w=w, h=h, font=FONT, txt=TXT, base_l=BASE_L, base=BASE,
+                            mid=MID, navy=NAVY, deep=DEEP, canvas_bg=flat_bg, body=body)
     layers = ""
     if photo:
         layers += photo_bg(photo, dark, blur, focus)
@@ -478,7 +485,8 @@ def page(title, w, h, body, grid=True, pitch=34, gop=0.035, photo=None, dark=0.6
         layers += f'<div class="grid">{svg_fixed(w, h, dot_grid(w, h, pitch=pitch, op=gop))}</div>'
     layers += '<div class="vignette"></div>'
     return SHELL.format(title=title, w=w, h=h, font=FONT, txt=TXT, base_l=BASE_L, base=BASE,
-                        mid=MID, navy=NAVY, deep=DEEP, body=layers + body)
+                        mid=MID, navy=NAVY, deep=DEEP, canvas_bg=DEFAULT_CANVAS_BG,
+                        body=layers + body)
 
 
 # ---------------------------------------------------------------- 画框与封面
@@ -675,6 +683,118 @@ def poster_cover_page(w, h, photo, title, subtitle="", tags=None, footer_left=""
             f'<span style="font-size:13px;color:{ensure_contrast(SUB, DEEP, 4.5)}">{brand_line}</span>'
             f"</div>")
     return page("cover-poster", w, h, body, photo=photo, dark=dark, blur=blur)
+
+
+# ------------------------------------------------- 封面方案 B：黑底主体 + 右侧粗白字
+def block_cover_page(w, h, title, subject_svg="", block_words=(), subject_w=0.40,
+                     layout=None, kicker="", footer_left="", brand_line="",
+                     block_color=None, bg="#0B0B0D", sub=""):
+    """封面方案 B：纯黑底 + 左侧立体主体 + 右侧 2–3 行超粗白字 + 末行彩色色块。
+
+    取自对标账号「逛逛GitHub」的封面公式（20 张实测无例外，见
+    references/benchmark-guangguang-github.md 第四节）：列表页里封面只有拇指大，
+    纯黑底 + 超粗白字给出最高对比，左侧立体主体提供质感钩子，末行色块给出唯一的颜色记忆点。
+
+    title        —— 用 \\n 分行；建议 2–3 行，每行 4–6 字（超粗字大了才有力）
+    subject_svg  —— 左侧主体的 SVG 片段（用本模块的基础件拼；不传就只留出空位）
+    block_words  —— 要放进彩色实心块的**末行**文字（通常就是 title 的最后一行）；
+                    传了它，该行会渲染成色块 + 白字
+    subject_w    —— 左侧主体占宽度比例，默认 0.40
+    block_color  —— 末行色块的颜色，默认点缀色 ORANGE；建议跟主体呼应
+    kicker       —— 标题上方一行小标签（短）
+    sub          —— 标题下方一行小字说明（可选）
+    """
+    wide = (layout or ("wide" if w / h > 1.6 else "square")) == "wide"
+    block_color = block_color or ORANGE
+    lines = [ln.strip() for ln in str(title).split("\n") if ln.strip()] or [""]
+    block_words = list(block_words or ())
+    block_set = {str(x).strip() for x in block_words}
+
+    # 两种排布：宽图左右分栏；方图上下分栏（方图窄，左右分栏会把文字挤到放不下）
+    if wide:
+        subj_w = int(w * subject_w)
+        text_x = subj_w + 34
+        avail = w - text_x - 56
+        text_top = None
+        zone_h = h
+    else:
+        subj_w, text_x = w, 34
+        avail = w - 68
+        text_top = int(h * 0.38)          # 主体占上方，文字从 38% 处开始
+        zone_h = h - text_top - 54        # 再留出底部信息栏
+
+    # 超粗白字：字号同时受**横向**与**纵向**两个约束，取小的那个。
+    # 横向：最长一行要放得下；纵向：所有行 + kicker 要放进可用高度。
+    # 只算横向会在方图上翻车（3 行大字纵向溢出、压到底部信息栏）。
+    ls_ratio = 0.01
+    units = [sum(_adv_units(c) for c in ln) + ls_ratio * max(0, len(ln) - 1) for ln in lines]
+    size_w = avail / ((max(units) or 1) * 1.03)
+    # 纵向：每行占 1.22em，kicker 占 0.46em，sub 占 0.60em
+    v_units = len(lines) * 1.22 + (0.46 if kicker else 0) + (0.60 if sub else 0)
+    size_h = zone_h / max(v_units, 0.1)
+    size = int(min(int(h * 0.34) if wide else int(h * 0.21), size_w, size_h))
+    size = max(12, size)
+
+    line_h = size * 1.22
+    block_h = len(lines) * line_h
+    if kicker:
+        block_h += size * 0.46
+    if sub:
+        block_h += size * 0.60
+    if wide:
+        y0 = (h - block_h) / 2 + size * 0.82
+    else:
+        y0 = text_top + (zone_h - block_h) / 2 + size * 0.82
+    if kicker:
+        y0 += size * 0.46
+
+    art = ""
+    if kicker:
+        art += txt(text_x, y0 - size * 1.02, kicker, size * 0.30,
+                   ensure_contrast(SUB, bg, 4.5), "600", ls=".14em")
+
+    for i, ln in enumerate(lines):
+        y = y0 + i * line_h
+        if ln in block_set:
+            # 末行：实心彩色矩形块 + 白色字（块的宽度按文字宽度加内边距）
+            tw = sum(_adv_units(c) for c in ln) * size
+            bx, by = text_x - size * 0.16, y - size * 0.86
+            art += rrect(bx, by, tw + size * 0.34, size * 1.16, max(3, size * 0.06), block_color)
+            art += txt(text_x, y, ln, size, "#FFFFFF", "900", ls=".01em")
+        else:
+            art += txt(text_x, y, ln, size, "#FFFFFF", "900", ls=".01em")
+
+    if sub:
+        art += txt(text_x, y0 + (len(lines) - 1) * line_h + size * 0.78, sub,
+                   size * 0.30, ensure_contrast(SUB, bg, 4.5), "500")
+
+    # 主体：给一层很淡的径向光，让立体件"浮"在黑底上。
+    # 宽图主体在左半侧居中；方图主体在上方区域内居中（文字在下半侧）。
+    if wide:
+        glow_cx, glow_cy = subj_w * 0.5, h * 0.5
+        glow_rx, glow_ry = subj_w * 0.62, h * 0.46
+    else:
+        glow_cx, glow_cy = w * 0.5, text_top * 0.5
+        glow_rx, glow_ry = w * 0.42, text_top * 0.44
+    glow = (f'<radialGradient id="subjGlow" cx="50%" cy="50%" r="50%">'
+            f'<stop offset="0%" stop-color="{rgba(block_color, .22)}"/>'
+            f'<stop offset="100%" stop-color="{rgba(block_color, 0)}"/></radialGradient>')
+    subj_layer = (f'<svg width="{w}" height="{h}" viewBox="0 0 {w} {h}" '
+                  f'style="position:absolute;left:0;top:0">'
+                  f'<defs>{glow}</defs>'
+                  f'<ellipse cx="{glow_cx}" cy="{glow_cy}" rx="{glow_rx}" ry="{glow_ry}" '
+                  f'fill="url(#subjGlow)"/>{subject_svg}</svg>')
+
+    body = (f'{subj_layer}'
+            f'<div style="position:absolute;left:0;top:0;width:{w}px;height:{h}px">'
+            f'{svg_fixed(w, h, art, glow_defs([block_color, "#FFFFFF"]))}</div>'
+            f'<div style="position:absolute;left:{56 if wide else 28}px;right:{56 if wide else 28}px;'
+            f'bottom:24px;display:flex;align-items:center;justify-content:space-between">'
+            f'<span style="font-family:{MONO};font-size:11.5px;letter-spacing:.13em;'
+            f'color:{ensure_contrast(DIM, bg, 4.0)}">{footer_left}</span>'
+            f'<span style="font-size:13px;color:{ensure_contrast(SUB, bg, 4.5)}">{brand_line}</span>'
+            f"</div>")
+    return page("cover-block", w, h, body, grid=False, photo=None, flat_bg=bg)
 
 
 # ---------------------------------------------------------------- 看效果

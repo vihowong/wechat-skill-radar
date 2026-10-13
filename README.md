@@ -2,8 +2,12 @@
 
 把**近期热门的 AI 项目、Agent Skill、模型与科技热点**写成一篇能直接粘进公众号编辑器的文章——
 多源找选题、用公开信息把事实核准（不需要本机实测）、按项目手册 / 科普解读 / 清单合集 / 选型指南四种框架成稿、
-讲人话让外行读得懂、每篇都给读者一个能立刻用上的东西、给一组标题候选、用可商用素材照片加大字报排版出图、
-交付前过一遍版权与违规词。
+讲人话让外行读得懂、每篇都给读者一个能立刻用上的东西、给一组标题候选、
+用可商用素材照片或黑底主体排版出图、交付前过一遍版权与违规词。
+
+排版与手感对标过真实账号：`references/benchmark-guangguang-github.md` 是对公众号「逛逛GitHub」的实测拆解
+（20 篇正文 + 20 张封面，逐项量过），正文行高、章节编号、封面方案 B 都来自这份测量；
+`scripts/style_probe.py` 可以对任意账号复现同款测量。
 
 这是一个 [Codex Skill](https://docs.openai.com/)：把 `SKILL.md` 和配套脚本放进 skills 目录，
 之后直接说"看看最近有什么热门的 AI 技能，写成公众号文章"就能触发；也可以只把 `scripts/` 当普通工具链用。
@@ -21,8 +25,15 @@
 ![配图示例](docs/demo-figure.png)
 
 上面三张都是 `python scripts/design_kit.py demo` 生成的演示图，不是真实文章。
-现在的封面走**大字报串联排版**：可商用照片做底 + 大字逐字串联 + 阶梯错位 + 左侧动线，
-色板从照片里取（`design_kit.poster_cover_page` / `use_palette_from_photo`）。
+封面有两种方案，**一期只用一种**：
+
+- **方案 A 大字报串联**：可商用照片做底 + 大字逐字串联 + 阶梯错位 + 左侧动线，
+  色板从照片里取（`design_kit.poster_cover_page` / `use_palette_from_photo`）。
+- **方案 B 黑底主体 + 右侧粗白字**：纯黑底 + 左 40% 立体主体 + 右 60% 超粗白字，
+  **末行放进彩色实心块**（`design_kit.block_cover_page`）。对比最强，清单与盘点类首选。
+
+方案 B 的做法取自对标账号「逛逛GitHub」的封面公式（20 张实测），完整拆解见
+`references/benchmark-guangguang-github.md`。
 
 ## 四种文章框架
 
@@ -55,10 +66,11 @@
 | `scripts/fetch_missing.py` | 被 GitHub 限流（HTTP 403）时按间隔只补没抓到的分类，再合并成候选清单 |
 | `scripts/pick_skills.py` | 按方向筛候选、剔除已收录仓库、按热度排序；`--any` 不限方向 |
 | `scripts/stock_photos.py` | 找可商用照片：`--theme tech/ai/cyberpunk/code/robot/data/abstract` 题材预设、多来源自动兜底、下载并写授权记录、标出疑似 AI 生成素材 |
-| `scripts/design_kit.py` | 出图基础件与配色工具：从照片取色 `palette_from_photo`、对比度体检 `contrast_report`、大字报封面 `poster_cover_page`、照片底图、配图画框、色板与图形件 |
+| `scripts/design_kit.py` | 出图基础件与配色工具：从照片取色 `palette_from_photo`、对比度体检 `contrast_report`、大字报封面 `poster_cover_page`、**黑底主体封面 `block_cover_page`**、照片底图、配图画框、色板与图形件 |
 | `scripts/render.py` | 本机 Chrome / Edge 无头渲染 HTML → PNG 或 JPEG（照片页面必须出 JPEG） |
-| `scripts/md2wechat.py` | Markdown → 公众号可粘贴的内联样式 HTML（版式规格见 `references/wechat-layout.md`） |
-| `scripts/qa.py` | 发布前自检：图片比例与体积、段落长度、颜色白名单、必备模块、禁用词、标题候选、AI 腔词表、标点频次、段落节奏、违规词与极限词、图片授权记录、**信息密度**、**有没有能照抄的东西**、**有没有没做过的第一人称实测** |
+| `scripts/md2wechat.py` | Markdown → 公众号可粘贴的内联样式 HTML（支持 `## 01 标题` 的编号式章节与行内命令，版式规格见 `references/wechat-layout.md`） |
+| `scripts/qa.py` | 发布前自检：图片比例与体积、**图文比**、段落长度与**中位字数**、颜色白名单、必备模块、**章节编号是否渲染且连续**、禁用词、标题候选、AI 腔词表、标点频次、段落节奏、违规词与极限词、图片授权记录、**信息密度**、**有没有能照抄的东西**、**有没有没做过的第一人称实测** |
+| `scripts/style_probe.py` | **对标账号版式探针**：给一个公众号文章链接，抓若干篇正文，测出它的排版数值、结构、配图与标题句式，产出 `_对标/<账号>/对标报告.md`。想学新账号时先跑它，别凭感觉说"它排版好看" |
 
 ## 快速开始
 
@@ -86,12 +98,18 @@ python _工作文件/github_skill_crawler.py readme --only owner/repo owner/repo
 # 4. 起标题（references/titles.md）→ 按框架写稿（references/editorial-rules.md +
 #    references/writing-craft.md + references/readability.md）→ 格式照 examples/
 
-# 5. 出图：素材照片找 stock_photos（题材限定科技/AI/赛博朋克），取色 + 大字报封面写 make_pages
+# 5. 出图：先定封面方案（A 照片底大字报 / B 黑底主体+右侧粗白字，一期只用一种）
 python _工作文件/stock_photos.py search --theme cyberpunk --top 8 --min-width 1200
 python _工作文件/stock_photos.py pick 3 --used-in 封面
 python _工作文件/design_kit.py demo          # 先看基础件效果
 python _工作文件/render.py _工作文件/pages/cover-2x1.html 封面/封面_1276x544.jpg --width 1276 --height 544
 python _工作文件/render.py _工作文件/pages/fig1.html 配图/配图1_xxx.jpg --width 1080 --height 608
+
+# 5b.（可选）想学一个新账号的排版：先量，别凭感觉
+python _工作文件/style_probe.py seed "https://mp.weixin.qq.com/s/xxxxxxxx"
+python _工作文件/style_probe.py index --name 账号名 --biz xxx --album xxx --max 20
+python _工作文件/style_probe.py fetch --name 账号名 --max 20
+python _工作文件/style_probe.py report --name 账号名     # → _对标/账号名/对标报告.md
 
 # 6. 转公众号 HTML + 自检
 python _工作文件/md2wechat.py 发布稿.md 公众号粘贴版.html
@@ -120,12 +138,21 @@ python _工作文件/qa.py 发布稿.md 公众号粘贴版.html      # 必须 0 
 - **配图与封面以可商用素材为底。** 素材照片做底 + 代码压字（封面、章节图、氛围图）；官方 README / 文档 / 发布页的图
   做证据类插图（注明来源、可加红框、保留水印）；对照表与流程用代码画。**题材限定科技 / AI / 赛博朋克这条线**，
   不用办公室绿植、咖啡杯这类通用商务图。照片页面一律输出 JPEG（体积从 700KB 降到 ≈100KB）。
-- **封面用大字报串联排版。** 每行 4–7 字、字间圆点串联、阶梯错位、左侧动线、最多点亮两处；
-  2.35:1 排两行长句，1:1 排三行短句。
+- **封面二选一，一期只用一种。** 方案 A 大字报串联（照片底，每行 4–7 字、字间圆点串联、阶梯错位、
+  左侧动线、最多点亮两处；2.35:1 排两行长句，1:1 排三行短句）；方案 B 黑底主体 + 右侧粗白字
+  （纯黑底、左 40% 立体主体、右 60% 超粗白字、末行放进彩色实心块、整张只有一个彩色）。
+  清单与盘点类用 B（列表页里最跳），科普与选型类用 A（要氛围）。
 - **配色有逻辑，不靠感觉。** 从素材照片取色（底色同源、主色取自画面饱和色、点缀取第二色相）→ 明度校准到
   可读区间（大字 ≥3:1、小字 ≥4.5:1）→ `contrast_report()` 体检两端底色；一期共用一个色板，色相不超过两个。
-- **版式固定，内容换新。** 排版规格（15px 正文、墨绿单一强调色、导语灰卡、小标题左绿条、13px 图注、
+- **版式固定，内容换新。** 排版规格（15px 正文 / **行高 2em** / 字距 0.034em / 左右 8px 缩进、
+  章节用 `## 01 标题` 渲染成大号墨绿编号、命令用反引号标成等宽小块、单一强调色、导语灰卡、13px 图注、
   不声明 font-family）固定；每期换的是结构、叙事、封面构图和配图骨架。
+  行高 2em 与编号件取自对标账号的实测规格，见 `references/benchmark-guangguang-github.md`。
+- **段落压短、图文比拉高。** 对标账号的段落中位数是 34 字（97.6% 的段落 ≤80 字），图文比 6.2 张/千字
+  （每 2–3 段一张图）——这是长文能读下去的真正原因。我们的门槛是段落中位 ≤80 字、图文比 ≥2 张/千字，
+  `qa.py` 两项都会查。
+- **学对标学做法，不学它的词。** 可以借结构、排版、图文比、标题两截式（硬事实 + 人味，句号收尾）；
+  **不借**夸张词（堪称一绝、玩疯了、狠狠收藏）、结尾关注引导与名片、无署名的截图、"我实测"式自证。
 - **每期给一组标题，而不是一个。** 6–8 条候选（1 条推荐 + 3–5 条备选），覆盖官方数据、门槛提示、场景痛点、
   对比选择等钩子，推荐标题 ≤20 字，写进发布稿元信息，交付时连理由一起报给用户挑。
 - **色板可换，风格不换。** 封面与配图每期可以换一套基调（`references/visual-recipes.md` 备了五套），
@@ -141,14 +168,15 @@ references/
   topic-selection.md          选题：四种框架、主题口径、热度判断、入选与去重
   sources.md                  来源：GitHub / Hacker News / Reddit / X / 网页搜索怎么用
   editorial-rules.md          内容边界、四种框架的骨架与必答项、平行字段、数据与出处口径
+  benchmark-guangguang-github.md  对标档案：公众号「逛逛GitHub」的实测拆解（20 篇正文 + 20 张封面），学什么不学什么
   writing-craft.md            写作手感：三档来源、证据链、落笔模板、落地四件套、AI 腔禁用词
   readability.md              简单易懂：术语怎么解释、数字给参照系、小标题怎么写、劝退清单
   compliance.md               版权与合规：许可证、短引用、平台红线、极限词、图片授权、AI 标识
   titles.md                   标题候选：钩子类型表、起标题流程、写进元信息的格式
-  wechat-layout.md            公众号排版规格、图片与署名、排版层面的去 AI 腔
-  visual-recipes.md           素材从哪来（科技/AI/赛博朋克题材表）、选图标准、大字报串联封面、配色三步、体积预算、常见的坑
+  wechat-layout.md            公众号排版规格（15px / 行高 2em / 编号章节）、图片与署名、排版层面的去 AI 腔
+  visual-recipes.md           素材从哪来（科技/AI/赛博朋克题材表）、封面两方案怎么选、选图标准、配色三步、体积预算、常见的坑
   qa-checklist.md             发布前自检清单（机器项 + 目视项 + 版权合规 + 交付汇报）
-scripts/                      九个工具（trend_radar / stock_photos / render 支持 JPEG 等）
+scripts/                      十个工具（含 style_probe 对标探针；trend_radar / stock_photos / render 支持 JPEG 等）
 examples/
   make_pages_demo.py          出图模板：封面两种尺寸 + 照片底配图 + 代码信息图，改文案即可跑
   sample-project-manual.md    项目手册的稿件格式示例
